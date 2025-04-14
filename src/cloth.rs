@@ -1,6 +1,6 @@
-use std::intrinsics::sqrtf32;
-
 use raylib::prelude::*;
+
+use crate::drafting::{Draft, Line};
 
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub struct Index3 {
@@ -98,6 +98,90 @@ impl Cloth {
         }
         ret
     }
+    pub fn generate_from_draft(draft: &Draft, scale: f32, detail: f32) -> Self {
+        let mut segments: Vec<ClothSegment> = vec![];
+
+        let (min_bound, max_bound) = draft.get_bounds();
+        // since rust doesnt have good for loops i have to do this ugly syntax
+        let mut x = min_bound.x;
+        let mut x_step = 0;
+        let mut y_index_max = 0;
+        while x < max_bound.x {
+            let mut check = Vector2 { x, y: max_bound.y };
+            let mut intersections: u32 = 0;
+            let mut confirmed_lines: Vec<Line> = vec![];
+            let mut y_step = 0;
+            while check.y > min_bound.y {
+                let mut intersected = false;
+                for line in &draft.lines {
+                    if line.p1.x == line.p2.x {
+                        continue;
+                    }
+                    // rust has no goto satement so you have to do this ugly
+                    let mut continue_check = false;
+                    if line.hitbox(check, detail + 0.001) {
+                        for checked_line in &confirmed_lines {
+                            if checked_line.partial_match(line) {
+                                continue_check = true;
+                                break;
+                            }
+                        }
+                        if continue_check {
+                            continue;
+                        }
+
+                        confirmed_lines.push(*line);
+                        intersected = true;
+                        break;
+                    }
+                }
+                intersections += intersected as u32;
+                if intersections % 2 == 1 {
+                    segments.push(ClothSegment {
+                        frag: ClothSegmentFrag {
+                            index: Index3 {
+                                x: x_step,
+                                y: 0,
+                                z: y_step,
+                            },
+                            position: Vector3 {
+                                x: x_step.as_f32() * scale,
+                                y: 1.0,
+                                z: y_step.as_f32() * scale,
+                            },
+                            velocity: Vector3::zero(),
+                            pinned: x_step == 2 || y_step == 1,
+                        },
+                        neighbors: vec![],
+                        neighbor_index: vec![],
+                    });
+                }
+
+                check.y -= detail;
+                y_step += 1;
+            }
+            y_index_max = y_step;
+
+            x += detail;
+            x_step += 1;
+        }
+        let x_index_max = x_step;
+
+        let mut ret = Cloth { segments, scale };
+        for x in 0..x_index_max {
+            for y in 0..y_index_max {
+                match ret.find_index_info(Index3 { x, y: 0, z: y }) {
+                    None => {}
+                    Some((segment, neighbors, neighbor_index)) => {
+                        segment.neighbors = neighbors;
+                        segment.neighbor_index = neighbor_index;
+                    }
+                }
+            }
+        }
+        ret
+    }
+
     pub fn draw(&self, r: &mut RaylibMode3D<'_, RaylibDrawHandle<'_>>) {
         for segment in &self.segments {
             r.draw_cube(
