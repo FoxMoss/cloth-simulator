@@ -16,6 +16,8 @@ use xml::{
 pub struct Line {
     pub p1: Vector2,
     pub p2: Vector2,
+    pub pinned: bool,
+    pub link: Option<u32>,
 }
 
 impl Line {
@@ -67,6 +69,7 @@ impl Line {
 pub struct Draft {
     pub lines: Vec<Line>,
     camera: Camera2D,
+    current_link: u32,
 }
 
 impl Draft {
@@ -80,8 +83,9 @@ impl Draft {
                 },
                 target: Vector2 { x: 0.0, y: 0.0 },
                 rotation: 0.0,
-                zoom: 1.0,
+                zoom: 5.0,
             },
+            current_link: 1,
         };
 
         let file = File::open(file).unwrap();
@@ -112,7 +116,12 @@ impl Draft {
                     }
 
                     if is_line {
-                        draft.lines.push(Line { p1, p2 });
+                        draft.lines.push(Line {
+                            p1,
+                            p2,
+                            pinned: false,
+                            link: None,
+                        });
                     }
                     depth += 1;
                 }
@@ -159,19 +168,54 @@ impl Draft {
         let scale = 0.2 * wheel;
         self.camera.zoom = self.camera.zoom + scale;
 
+        let mut pin = false;
+        if d.is_key_pressed(raylib::ffi::KeyboardKey::KEY_S) {
+            pin = true;
+        }
+        let mut link = false;
+        if d.is_key_pressed(raylib::ffi::KeyboardKey::KEY_F) {
+            link = true;
+        }
+
+        d.draw_text(
+            format!("Link number: {}", self.current_link).as_str(),
+            10,
+            40,
+            20,
+            Color::BLACK,
+        );
+
         let mut m = d.begin_mode2D(self.camera);
-        for line in &self.lines {
-            m.draw_line_v(line.p1, line.p2, Color::BLUE);
+        for line in &mut self.lines {
+            m.draw_line_v(
+                line.p1,
+                line.p2,
+                if line.pinned {
+                    Color::RED
+                } else {
+                    Color::GREEN
+                },
+            );
             if line.hitbox(mouse_world_pos, 2.0) {
-                m.draw_line_v(line.p1, line.p2, Color::RED);
-            } else {
-                // m.draw_text(
-                //     format!("{}", line.hitbox(mouse_world_pos, 1.0)).as_str(),
-                //     line.p1.x as i32,
-                //     line.p1.y as i32,
-                //     1,
-                //     Color::RED,
-                // );
+                if pin {
+                    line.pinned = !line.pinned;
+                }
+                if link {
+                    line.link = Some(self.current_link)
+                }
+                m.draw_line_v(line.p1, line.p2, Color::BLUE);
+            }
+            match line.link {
+                None => {}
+                Some(link) => {
+                    m.draw_text(
+                        format!("{}", link).as_str(),
+                        (line.p1.x + (line.p2.x - line.p1.x) / 2.0) as i32,
+                        (line.p1.y + (line.p2.y - line.p1.y) / 2.0) as i32,
+                        1,
+                        Color::BLACK,
+                    );
+                }
             }
         }
     }

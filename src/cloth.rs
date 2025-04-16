@@ -1,3 +1,5 @@
+use std::{clone, collections::HashMap};
+
 use raylib::prelude::*;
 
 use crate::drafting::{Draft, Line};
@@ -54,11 +56,13 @@ pub struct ClothSegmentFrag {
     position: Vector3,
     pub velocity: Vector3,
     pinned: bool,
+    pub link_vector: Option<Vector2>,
 }
 pub struct ClothSegment {
     frag: ClothSegmentFrag,
     neighbors: Vec<Index3>,
     neighbor_index: Vec<usize>,
+    pub link_number: Option<u32>,
 }
 
 pub struct Cloth {
@@ -81,9 +85,11 @@ impl Cloth {
                         },
                         velocity: Vector3::zero(),
                         pinned: x == 0,
+                        link_vector: None,
                     },
                     neighbors: vec![],
                     neighbor_index: vec![],
+                    link_number: None,
                 });
             }
         }
@@ -100,12 +106,15 @@ impl Cloth {
     }
     pub fn generate_from_draft(draft: &Draft, scale: f32, detail: f32) -> Self {
         let mut segments: Vec<ClothSegment> = vec![];
+        let mut segment_links: HashMap<u32, Vec<u32>> = HashMap::new();
+        let mut segment_frags: Vec<ClothSegmentFrag> = vec![];
 
         let (min_bound, max_bound) = draft.get_bounds();
         // since rust doesnt have good for loops i have to do this ugly syntax
         let mut x = min_bound.x;
         let mut x_step = 0;
         let mut y_index_max = 0;
+        let mut insert_index: u32 = 0;
         while x < max_bound.x {
             let mut check = Vector2 { x, y: max_bound.y };
             let mut intersections: u32 = 0;
@@ -113,49 +122,71 @@ impl Cloth {
             let mut y_step = 0;
             while check.y > min_bound.y {
                 let mut intersected = false;
-                for line in &draft.lines {
+                let mut pinned = false;
+                let mut link_vector: Option<Vector2> = None;
+                let mut link_number: Option<u32> = None;
+                'draft_lines: for line in &draft.lines {
+                    if line.hitbox(check, detail + 0.001) {
+                        if line.pinned {
+                            pinned = true;
+                        }
+                    }
                     if line.p1.x == line.p2.x {
                         continue;
                     }
                     // rust has no goto satement so you have to do this ugly
-                    let mut continue_check = false;
                     if line.hitbox(check, detail + 0.001) {
+                        if line.pinned {
+                            pinned = true;
+                        }
+                        if line.link.is_some() {
+                            link_vector = Some(line.p1);
+                            link_number = line.link;
+                        }
+
                         for checked_line in &confirmed_lines {
                             if checked_line.partial_match(line) {
-                                continue_check = true;
-                                break;
+                                continue 'draft_lines;
                             }
-                        }
-                        if continue_check {
-                            continue;
                         }
 
                         confirmed_lines.push(*line);
                         intersected = true;
-                        break;
                     }
                 }
-                intersections += intersected as u32;
                 if intersections % 2 == 1 {
-                    segments.push(ClothSegment {
-                        frag: ClothSegmentFrag {
-                            index: Index3 {
-                                x: x_step,
-                                y: 0,
-                                z: y_step,
-                            },
-                            position: Vector3 {
-                                x: x_step.as_f32() * scale,
-                                y: 1.0,
-                                z: y_step.as_f32() * scale,
-                            },
-                            velocity: Vector3::zero(),
-                            pinned: x_step == 2 || y_step == 1,
+                    let frag = ClothSegmentFrag {
+                        index: Index3 {
+                            x: x_step,
+                            y: 0,
+                            z: y_step,
                         },
+                        position: Vector3 {
+                            x: x_step.as_f32() * scale,
+                            y: 1.0,
+                            z: y_step.as_f32() * scale,
+                        },
+                        velocity: Vector3::zero(),
+                        pinned,
+                        link_vector,
+                    };
+                    segments.push(ClothSegment {
+                        frag,
                         neighbors: vec![],
                         neighbor_index: vec![],
+                        link_number,
                     });
+                    segment_frags.push(frag);
+                    if link_number.is_some() {
+                        let number = link_number.unwrap();
+                        if !segment_links.contains_key(&number) {
+                            segment_links.insert(number, vec![]);
+                        }
+                        segment_links.get_mut(&number).unwrap().push(insert_index);
+                    }
+                    insert_index += 1;
                 }
+                intersections += intersected as u32;
 
                 check.y -= detail;
                 y_step += 1;
@@ -175,6 +206,14 @@ impl Cloth {
                     Some((segment, neighbors, neighbor_index)) => {
                         segment.neighbors = neighbors;
                         segment.neighbor_index = neighbor_index;
+
+                        if segment.frag.link_vector.is_some() {
+                            let number = segment.link_number.unwrap();
+                            for index in segment_links[&number].clone() {
+                                segment.neighbors.push(segment_frags[index as usize].index);
+                                segment.neighbor_index.push(index.try_into().unwrap());
+                            }
+                        }
                     }
                 }
             }
@@ -218,6 +257,8 @@ impl Cloth {
                 let change = self.scale - diff.length();
                 segment.frag.velocity += diff.normalized().scale_by(change * 0.3);
             }
+            let new_max = segment.frag.velocity.length().min(0.5);
+            segment.frag.velocity = segment.frag.velocity.normalized() * new_max;
 
             if !segment.frag.pinned {
                 segment.frag.position += segment.frag.velocity;
