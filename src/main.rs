@@ -18,7 +18,7 @@ fn main() {
         .title("Melencoly")
         .build();
 
-    let mut draft = Draft::new("/home/foxmoss/Documents/BagProto.svg", WIDTH, HEIGHT);
+    let mut draft = Draft::new("/home/foxmoss/Documents/Weaverling", WIDTH, HEIGHT);
 
     let mut state = State::Drafting;
 
@@ -55,7 +55,7 @@ fn main() {
             State::Drafting => {
                 if d.is_key_pressed(KeyboardKey::KEY_ENTER) {
                     state = State::Rendering;
-                    cloth = Cloth::generate_from_draft(&draft, 0.1, 0.9);
+                    cloth = Cloth::generate_from_draft(&draft, 0.1, 0.1);
                     d.disable_cursor();
                 }
                 draft.draw(&mut d);

@@ -176,6 +176,12 @@ impl Draft {
         if d.is_key_pressed(raylib::ffi::KeyboardKey::KEY_F) {
             link = true;
         }
+        if d.is_key_pressed(raylib::ffi::KeyboardKey::KEY_Q) {
+            self.current_link += 1;
+        }
+        if d.is_key_pressed(raylib::ffi::KeyboardKey::KEY_E) {
+            self.current_link -= 1;
+        }
 
         d.draw_text(
             format!("Link number: {}", self.current_link).as_str(),
@@ -201,7 +207,10 @@ impl Draft {
                     line.pinned = !line.pinned;
                 }
                 if link {
-                    line.link = Some(self.current_link)
+                    line.link = match line.link {
+                        None => Some(self.current_link),
+                        Some(_) => None,
+                    }
                 }
                 m.draw_line_v(line.p1, line.p2, Color::BLUE);
             }

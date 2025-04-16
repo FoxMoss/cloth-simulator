@@ -1,4 +1,4 @@
-use std::{clone, collections::HashMap};
+use std::{clone, collections::HashMap, f32, usize};
 
 use raylib::prelude::*;
 
@@ -56,13 +56,14 @@ pub struct ClothSegmentFrag {
     position: Vector3,
     pub velocity: Vector3,
     pinned: bool,
-    pub link_vector: Option<Vector2>,
+    pub link_vector: Option<f32>,
 }
 pub struct ClothSegment {
     frag: ClothSegmentFrag,
     neighbors: Vec<Index3>,
     neighbor_index: Vec<usize>,
     pub link_number: Option<u32>,
+    pub index: usize,
 }
 
 pub struct Cloth {
@@ -73,6 +74,7 @@ pub struct Cloth {
 impl Cloth {
     pub fn generate_square(width: i32, height: i32, scale: f32) -> Self {
         let mut segments: Vec<ClothSegment> = vec![];
+        let mut index = 0;
         for x in 0..width {
             for y in 0..height {
                 segments.push(ClothSegment {
@@ -90,7 +92,9 @@ impl Cloth {
                     neighbors: vec![],
                     neighbor_index: vec![],
                     link_number: None,
+                    index,
                 });
+                index += 1;
             }
         }
         let mut ret = Cloth { segments, scale };
@@ -123,27 +127,24 @@ impl Cloth {
             while check.y > min_bound.y {
                 let mut intersected = false;
                 let mut pinned = false;
-                let mut link_vector: Option<Vector2> = None;
+                let mut link_vector: Option<f32> = None;
                 let mut link_number: Option<u32> = None;
                 'draft_lines: for line in &draft.lines {
                     if line.hitbox(check, detail + 0.001) {
                         if line.pinned {
                             pinned = true;
                         }
+
+                        if line.link.is_some() {
+                            link_vector =
+                                Some((line.p1 - check).length() / (line.p1 - line.p2).length());
+                            link_number = line.link;
+                        }
                     }
                     if line.p1.x == line.p2.x {
                         continue;
                     }
-                    // rust has no goto satement so you have to do this ugly
                     if line.hitbox(check, detail + 0.001) {
-                        if line.pinned {
-                            pinned = true;
-                        }
-                        if line.link.is_some() {
-                            link_vector = Some(line.p1);
-                            link_number = line.link;
-                        }
-
                         for checked_line in &confirmed_lines {
                             if checked_line.partial_match(line) {
                                 continue 'draft_lines;
@@ -175,6 +176,7 @@ impl Cloth {
                         neighbors: vec![],
                         neighbor_index: vec![],
                         link_number,
+                        index: insert_index as usize,
                     });
                     segment_frags.push(frag);
                     if link_number.is_some() {
@@ -209,9 +211,27 @@ impl Cloth {
 
                         if segment.frag.link_vector.is_some() {
                             let number = segment.link_number.unwrap();
+                            let mut min_dist = f32::INFINITY;
+                            let mut segment_index: Option<usize> = None;
                             for index in segment_links[&number].clone() {
-                                segment.neighbors.push(segment_frags[index as usize].index);
-                                segment.neighbor_index.push(index.try_into().unwrap());
+                                if index as usize == segment.index {
+                                    continue;
+                                }
+                                let dist = (segment_frags[index as usize].link_vector.unwrap()
+                                    - segment.frag.link_vector.unwrap())
+                                .abs();
+
+                                if dist < min_dist {
+                                    min_dist = dist;
+                                    segment_index = Some(index as usize);
+                                }
+                            }
+                            match segment_index {
+                                None => {}
+                                Some(index) => {
+                                    segment.neighbors.push(segment_frags[index as usize].index);
+                                    segment.neighbor_index.push(index);
+                                }
                             }
                         }
                     }
@@ -230,6 +250,8 @@ impl Cloth {
                 self.scale,
                 if segment.frag.pinned {
                     color::Color::RED
+                } else if segment.link_number.is_some() {
+                    color::Color::BLUE
                 } else {
                     color::Color::GREEN
                 },
@@ -255,9 +277,10 @@ impl Cloth {
 
                 let diff = segment.frag.position - frag.position;
                 let change = self.scale - diff.length();
-                segment.frag.velocity += diff.normalized().scale_by(change * 0.3);
+                segment.frag.velocity += diff.normalized().scale_by(change * 0.5);
             }
-            let new_max = segment.frag.velocity.length().min(0.5);
+            // terminal velocity so things stabilize quicker
+            let new_max = segment.frag.velocity.length().min(0.1);
             segment.frag.velocity = segment.frag.velocity.normalized() * new_max;
 
             if !segment.frag.pinned {
