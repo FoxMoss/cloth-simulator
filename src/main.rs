@@ -55,8 +55,9 @@ fn main() {
             State::Drafting => {
                 if d.is_key_pressed(KeyboardKey::KEY_ENTER) {
                     state = State::Rendering;
-                    cloth = Cloth::generate_from_draft(&draft, 0.1, 0.1);
+                    cloth = Cloth::generate_from_draft(&draft, 0.1, 4.0);
                     d.disable_cursor();
+                    paused = true;
                 }
                 draft.draw(&mut d);
             }
@@ -72,7 +73,6 @@ fn main() {
 
                 {
                     let mut r = d.begin_mode3D(cam);
-                    r.draw_grid(10, 1.0);
                     cloth.draw(&mut r);
                 }
                 d.draw_fps(0, 0);

@@ -120,17 +120,29 @@ impl Cloth {
         let mut y_index_max = 0;
         let mut insert_index: u32 = 0;
         while x < max_bound.x {
-            let mut check = Vector2 { x, y: max_bound.y };
-            let mut intersections: u32 = 0;
+            let mut check = Vector2 { x, y: min_bound.y };
             let mut confirmed_lines: Vec<Line> = vec![];
             let mut y_step = 0;
-            while check.y > min_bound.y {
-                let mut intersected = false;
+
+            let mut flip_points: Vec<f32> = vec![];
+            for line in &draft.lines {
+                if line.in_slice(check, 0.0) {
+                    match line.get_intersect_on_x(check) {
+                        None => {}
+                        Some(intersection_point) => {
+                            flip_points.push(intersection_point);
+                        }
+                    }
+                }
+            }
+            while check.y < max_bound.y {
+                let mut intersections: u32 = 0;
+
                 let mut pinned = false;
                 let mut link_vector: Option<f32> = None;
                 let mut link_number: Option<u32> = None;
-                'draft_lines: for line in &draft.lines {
-                    if line.hitbox(check, detail + 0.001) {
+                for line in &draft.lines {
+                    if line.hitbox(check, detail) {
                         if line.pinned {
                             pinned = true;
                         }
@@ -144,17 +156,14 @@ impl Cloth {
                     if line.p1.x == line.p2.x {
                         continue;
                     }
-                    if line.hitbox(check, detail + 0.001) {
-                        for checked_line in &confirmed_lines {
-                            if checked_line.partial_match(line) {
-                                continue 'draft_lines;
-                            }
-                        }
-
-                        confirmed_lines.push(*line);
-                        intersected = true;
+                }
+                for flip_point in &flip_points {
+                    if *flip_point > check.y {
+                        intersections += 1;
                     }
                 }
+
+                print!("{} intersections\n", intersections);
                 if intersections % 2 == 1 {
                     let frag = ClothSegmentFrag {
                         index: Index3 {
@@ -188,9 +197,8 @@ impl Cloth {
                     }
                     insert_index += 1;
                 }
-                intersections += intersected as u32;
 
-                check.y -= detail;
+                check.y += detail;
                 y_step += 1;
             }
             y_index_max = y_step;

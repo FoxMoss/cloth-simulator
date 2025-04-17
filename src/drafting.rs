@@ -29,6 +29,19 @@ impl Line {
             .abs()
             / ((self.p2.y - self.p1.y).powi(2) + (self.p2.x - self.p1.x).powi(2)).sqrt()
     }
+    pub fn in_slice(&self, point: Vector2, threshold: f32) -> bool {
+        if self.p1.x - self.p2.x > 0.0 {
+            return point.x < self.p1.x + threshold && point.x > self.p2.x - threshold;
+        } else {
+            return point.x < self.p2.x + threshold && point.x > self.p1.x - threshold;
+        }
+    }
+    pub fn get_intersect_on_x(&self, point: Vector2) -> Option<f32> {
+        if (self.p2.x - self.p1.x) == 0.0 {
+            return None; // divsion by 0
+        }
+        Some(self.p1.y + (point.x - self.p1.x) * (self.p2.y - self.p1.y) / (self.p2.x - self.p1.x))
+    }
     //https://stackoverflow.com/a/2752754
     pub fn hitbox(&self, point: Vector2, threshold: f32) -> bool {
         let ray = self.p2 - self.p1;
