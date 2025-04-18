@@ -163,7 +163,6 @@ impl Cloth {
                     }
                 }
 
-                print!("{} intersections\n", intersections);
                 if intersections % 2 == 1 {
                     let frag = ClothSegmentFrag {
                         index: Index3 {

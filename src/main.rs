@@ -15,10 +15,10 @@ const HEIGHT: i32 = 480;
 fn main() {
     let (mut rl, thread) = raylib::init()
         .size(WIDTH, HEIGHT)
-        .title("Melencoly")
+        .title("Weaverling")
         .build();
 
-    let mut draft = Draft::new("/home/foxmoss/Documents/Weaverling", WIDTH, HEIGHT);
+    let mut draft = Draft::new("files/BagProto.svg", WIDTH, HEIGHT);
 
     let mut state = State::Drafting;
 
@@ -55,7 +55,7 @@ fn main() {
             State::Drafting => {
                 if d.is_key_pressed(KeyboardKey::KEY_ENTER) {
                     state = State::Rendering;
-                    cloth = Cloth::generate_from_draft(&draft, 0.1, 4.0);
+                    cloth = Cloth::generate_from_draft(&draft, 0.1, 1.4);
                     d.disable_cursor();
                     paused = true;
                 }

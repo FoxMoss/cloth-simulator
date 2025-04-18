@@ -215,7 +215,7 @@ impl Draft {
                     Color::GREEN
                 },
             );
-            if line.hitbox(mouse_world_pos, 2.0) {
+            if line.hitbox(mouse_world_pos, 2.0 * self.camera.zoom) {
                 if pin {
                     line.pinned = !line.pinned;
                 }
