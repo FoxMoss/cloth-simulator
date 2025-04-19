@@ -41,7 +41,7 @@ fn main() {
         45.0,
     );
 
-    let mut cloth = cloth::Cloth::generate_square(10, 10, 0.1);
+    let mut cloth = cloth::Cloth::generate_square(10, 10, 0.5);
 
     rl.set_target_fps(30);
 
