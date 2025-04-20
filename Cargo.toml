@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+async-channel = "2.3.1"
+gio = "0.20.9"
 gtk = { version = "0.9.6", package = "gtk4", features = ["v4_6"] }
 raylib = "5.5.1"
 xml = "0.8.20"
