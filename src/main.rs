@@ -1,5 +1,6 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::ptr::NonNull;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use crate::glib::clone;
@@ -34,17 +35,27 @@ enum Message {
 fn main() {
     let app = Application::builder().application_id(APP_ID).build();
 
-    let (sender, receiver) = async_channel::bounded(1);
+    app.connect_activate(build_ui);
+
+    app.run();
+}
+
+fn build_ui(app: &Application) {
+    let (sender_for_raylib, receiver_for_gtk) = async_channel::bounded(1);
     let (sender_for_gtk, receiver_for_raylib): (Sender<Message>, Receiver<Message>) =
         async_channel::bounded(1);
-    let sender_for_gtk = Arc::new(Mutex::new(sender_for_gtk));
+    let sender_for_gtk = Rc::new(RefCell::new(sender_for_gtk));
 
-    unsafe {
-        app.set_data("sender_for_gtk", Arc::clone(&sender_for_gtk));
-        app.set_data("closed_sent", false);
-    }
-
-    app.connect_activate(build_ui);
+    app.connect_shutdown(clone!(
+        #[strong]
+        sender_for_gtk,
+        move |_| {
+            sender_for_gtk
+                .borrow()
+                .send_blocking(Message::Close)
+                .expect("The channel needs to be open.");
+        }
+    ));
 
     gio::spawn_blocking(move || {
         let (mut rl, thread) = raylib::init()
@@ -64,6 +75,7 @@ fn main() {
                 zoom: 5.0,
             },
             current_link: 1,
+            first_down: Vector2::zero(),
         };
 
         let mut state = State::FilePicker;
@@ -150,7 +162,7 @@ fn main() {
                 }
             }
         }
-        sender
+        sender_for_raylib
             .send_blocking(Message::Close)
             .expect("The channel needs to be open.");
     });
@@ -159,12 +171,9 @@ fn main() {
         #[weak]
         app,
         async move {
-            while let Ok(message) = receiver.recv().await {
+            while let Ok(message) = receiver_for_gtk.recv().await {
                 match message {
                     Message::Close => {
-                        unsafe {
-                            app.set_data("closed_sent", true);
-                        }
                         app.active_window().unwrap().close();
                     }
                     Message::OpenFile(file) => {
@@ -174,27 +183,6 @@ fn main() {
             }
         }
     ));
-
-    app.run();
-}
-
-fn build_ui(app: &Application) {
-    let sender = unsafe { app.data::<Arc<Mutex<Sender<Message>>>>("sender_for_gtk") };
-
-    if let Some(mut sender) = sender {
-        unsafe {
-            let sender_clone = Arc::clone(sender.as_mut());
-
-            app.connect_shutdown(move |_| {
-                let sender = sender_clone.lock().unwrap();
-                sender
-                    .send_blocking(Message::Close)
-                    .expect("The channel needs to be open.");
-            });
-        }
-    } else {
-        eprintln!("Failed to retrieve sender from application data.");
-    }
 
     let settings = Box::builder()
         .orientation(gtk::Orientation::Vertical)
@@ -210,7 +198,7 @@ fn build_ui(app: &Application) {
         .valign(gtk::Align::Center)
         .build();
     let upload_button = Button::builder().build();
-    upload_button.set_label("Upload Design");
+    upload_button.set_label("Load Design");
 
     let filter = FileFilter::new();
     filter.add_suffix("svg");
@@ -224,37 +212,32 @@ fn build_ui(app: &Application) {
     upload_dialog.add_button("Open", gtk::ResponseType::Accept);
     upload_dialog.set_default_response(gtk::ResponseType::Accept);
 
-    if let Some(mut sender) = sender {
-        unsafe {
-            let sender_clone = Arc::clone(sender.as_mut());
-
-            upload_dialog.connect_response(move |dialog, response_type| {
-                match response_type {
-                    gtk::ResponseType::Accept => match dialog.file() {
-                        None => {}
-                        Some(file_path) => {
-                            let sender = sender_clone.lock().unwrap();
-                            sender
-                                .send_blocking(Message::OpenFile(
-                                    file_path.path().unwrap().to_str().unwrap().to_string(),
-                                    // this is bad. i dont gaf
-                                ))
-                                .expect("The channel needs to be open.");
-                            dialog.destroy();
-                        }
-                    },
-                    _ => {}
-                }
-            });
-        }
-    } else {
-        eprintln!("Failed to retrieve sender from application data.");
-    }
-
-    upload_button.connect_clicked(move |_| {
-        upload_dialog.present();
-    });
     upload_container.append(&upload_button);
+
+    upload_dialog.connect_response(move |dialog, response_type| {
+        match response_type {
+            gtk::ResponseType::Accept => match dialog.file() {
+                None => {}
+                Some(file_path) => {
+                    sender_for_gtk
+                        .borrow()
+                        .send_blocking(Message::OpenFile(
+                            file_path.path().unwrap().to_str().unwrap().to_string(),
+                            // this is bad. i dont gaf
+                        ))
+                        .expect("The channel needs to be open.");
+                    dialog.destroy();
+                }
+            },
+            _ => {}
+        }
+    });
+
+    upload_button.connect_clicked(move |upload_button| {
+        upload_dialog.present();
+        upload_button.hide();
+    });
+
     design.append(&upload_container);
 
     let notebook = Notebook::builder().build();

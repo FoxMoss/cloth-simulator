@@ -18,6 +18,7 @@ pub struct Line {
     pub p2: Vector2,
     pub pinned: bool,
     pub link: Option<u32>,
+    pub highlighted: bool,
 }
 
 impl Line {
@@ -79,10 +80,22 @@ impl Line {
     }
 }
 
+fn rect_colision(root: Vector2, size: Vector2, point: Vector2) -> bool {
+    let biggest_y = root.y.max(root.y + size.y);
+    let smallest_y = root.y.min(root.y + size.y);
+    let biggest_x = root.x.max(root.x + size.x);
+    let smallest_x = root.x.min(root.x + size.x);
+    return point.x < biggest_x
+        && point.x > smallest_x
+        && point.y < biggest_y
+        && point.y > smallest_y;
+}
+
 pub struct Draft {
     pub lines: Vec<Line>,
     pub camera: Camera2D,
     pub current_link: u32,
+    pub first_down: Vector2,
 }
 
 impl Draft {
@@ -99,6 +112,7 @@ impl Draft {
                 zoom: 5.0,
             },
             current_link: 1,
+            first_down: Vector2::zero(),
         };
 
         let file = File::open(file).unwrap();
@@ -134,6 +148,7 @@ impl Draft {
                             p2,
                             pinned: false,
                             link: None,
+                            highlighted: false,
                         });
                     }
                     depth += 1;
@@ -169,7 +184,9 @@ impl Draft {
     }
 
     pub fn draw(&mut self, d: &mut RaylibDrawHandle) {
-        if d.is_mouse_button_down(raylib::ffi::MouseButton::MOUSE_BUTTON_LEFT) {
+        let move_camera = (d.is_key_down(raylib::ffi::KeyboardKey::KEY_LEFT_CONTROL)
+            || d.is_key_down(raylib::ffi::KeyboardKey::KEY_SPACE));
+        if d.is_mouse_button_down(raylib::ffi::MouseButton::MOUSE_BUTTON_LEFT) && move_camera {
             let mut delta = d.get_mouse_delta();
             delta.scale(-1.0 / self.camera.zoom);
             self.camera.target += delta;
@@ -181,21 +198,6 @@ impl Draft {
         let scale = 0.2 * wheel;
         self.camera.zoom = self.camera.zoom + scale;
 
-        let mut pin = false;
-        if d.is_key_pressed(raylib::ffi::KeyboardKey::KEY_S) {
-            pin = true;
-        }
-        let mut link = false;
-        if d.is_key_pressed(raylib::ffi::KeyboardKey::KEY_F) {
-            link = true;
-        }
-        if d.is_key_pressed(raylib::ffi::KeyboardKey::KEY_Q) {
-            self.current_link += 1;
-        }
-        if d.is_key_pressed(raylib::ffi::KeyboardKey::KEY_E) {
-            self.current_link -= 1;
-        }
-
         d.draw_text(
             format!("Link number: {}", self.current_link).as_str(),
             10,
@@ -205,27 +207,46 @@ impl Draft {
         );
 
         let mut m = d.begin_mode2D(self.camera);
+
+        if m.is_mouse_button_pressed(raylib::ffi::MouseButton::MOUSE_BUTTON_LEFT) && !move_camera {
+            if !m.is_key_down(raylib::ffi::KeyboardKey::KEY_LEFT_SHIFT) {
+                for line in &mut self.lines {
+                    line.highlighted = false;
+                }
+            }
+            self.first_down = mouse_world_pos;
+        }
+        if m.is_mouse_button_down(raylib::ffi::MouseButton::MOUSE_BUTTON_LEFT) && !move_camera {
+            m.draw_rectangle_v(
+                self.first_down,
+                mouse_world_pos - self.first_down,
+                Color::GRAY,
+            );
+        }
+
         for line in &mut self.lines {
+            if m.is_mouse_button_down(raylib::ffi::MouseButton::MOUSE_BUTTON_LEFT)
+                && !move_camera
+                && (rect_colision(self.first_down, mouse_world_pos - self.first_down, line.p1)
+                    || rect_colision(self.first_down, mouse_world_pos - self.first_down, line.p2))
+            {
+                line.highlighted = true;
+            }
             m.draw_line_v(
                 line.p1,
                 line.p2,
-                if line.pinned {
+                if line.hitbox(mouse_world_pos, 7.0 * (1.0 / self.camera.zoom)) {
+                    Color::DARKRED
+                } else if line.highlighted {
                     Color::RED
                 } else {
                     Color::GREEN
                 },
             );
-            if line.hitbox(mouse_world_pos, 2.0 * self.camera.zoom) {
-                if pin {
-                    line.pinned = !line.pinned;
-                }
-                if link {
-                    line.link = match line.link {
-                        None => Some(self.current_link),
-                        Some(_) => None,
-                    }
-                }
-                m.draw_line_v(line.p1, line.p2, Color::BLUE);
+            if m.is_mouse_button_pressed(raylib::ffi::MouseButton::MOUSE_BUTTON_LEFT)
+                && line.hitbox(mouse_world_pos, 7.0 * (1.0 / self.camera.zoom))
+            {
+                line.highlighted = true;
             }
             match line.link {
                 None => {}
