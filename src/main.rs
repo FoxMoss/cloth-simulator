@@ -1,6 +1,9 @@
 use std::cell::Cell;
+use std::ptr::NonNull;
+use std::sync::{Arc, Mutex};
 
 use crate::glib::clone;
+use async_channel::{Receiver, Sender};
 use cloth::Cloth;
 use drafting::Draft;
 use gio::glib::subclass::object::ObjectImpl;
@@ -31,10 +34,17 @@ enum Message {
 fn main() {
     let app = Application::builder().application_id(APP_ID).build();
 
-    app.connect_activate(build_ui);
-
     let (sender, receiver) = async_channel::bounded(1);
-    let (sender_for_gtk, receiver_for_raylib) = async_channel::bounded(1);
+    let (sender_for_gtk, receiver_for_raylib): (Sender<Message>, Receiver<Message>) =
+        async_channel::bounded(1);
+    let sender_for_gtk = Arc::new(Mutex::new(sender_for_gtk));
+
+    unsafe {
+        app.set_data("sender_for_gtk", Arc::clone(&sender_for_gtk));
+        app.set_data("closed_sent", false);
+    }
+
+    app.connect_activate(build_ui);
 
     gio::spawn_blocking(move || {
         let (mut rl, thread) = raylib::init()
@@ -42,7 +52,19 @@ fn main() {
             .title("Weaverling")
             .build();
 
-        let mut draft: Option<&mut Draft> = None;
+        let mut draft = Draft {
+            lines: vec![],
+            camera: Camera2D {
+                offset: Vector2 {
+                    x: (WIDTH / 2) as f32,
+                    y: (HEIGHT / 2) as f32,
+                },
+                target: Vector2 { x: 0.0, y: 0.0 },
+                rotation: 0.0,
+                zoom: 5.0,
+            },
+            current_link: 1,
+        };
 
         let mut state = State::FilePicker;
 
@@ -79,7 +101,8 @@ fn main() {
                         break;
                     }
                     Message::OpenFile(file) => {
-                        todo!();
+                        draft = Draft::new(file, WIDTH, HEIGHT);
+                        state = State::Drafting;
                     }
                 },
                 _ => {}
@@ -91,18 +114,15 @@ fn main() {
                 State::FilePicker => {
                     d.draw_text("Waiting for file...", 20, 20, 30, Color::BLACK);
                 }
-                State::Drafting => match draft {
-                    None => {}
-                    Some(ref mut draft_clone) => {
-                        if d.is_key_pressed(KeyboardKey::KEY_ENTER) {
-                            state = State::Rendering;
-                            cloth = Cloth::generate_from_draft(&draft_clone, 0.1, 1.4);
-                            paused = true;
-                            d.disable_cursor();
-                        }
-                        draft_clone.draw(&mut d);
+                State::Drafting => {
+                    if d.is_key_pressed(KeyboardKey::KEY_ENTER) {
+                        state = State::Rendering;
+                        cloth = Cloth::generate_from_draft(&draft, 0.1, 1.4);
+                        paused = true;
+                        d.disable_cursor();
                     }
-                },
+                    draft.draw(&mut d);
+                }
                 State::Rendering => {
                     d.update_camera(&mut cam, CameraMode::CAMERA_FREE);
 
@@ -142,6 +162,9 @@ fn main() {
             while let Ok(message) = receiver.recv().await {
                 match message {
                     Message::Close => {
+                        unsafe {
+                            app.set_data("closed_sent", true);
+                        }
                         app.active_window().unwrap().close();
                     }
                     Message::OpenFile(file) => {
@@ -153,12 +176,26 @@ fn main() {
     ));
 
     app.run();
-    sender_for_gtk
-        .send_blocking(Message::Close)
-        .expect("The channel needs to be open.");
 }
 
 fn build_ui(app: &Application) {
+    let sender = unsafe { app.data::<Arc<Mutex<Sender<Message>>>>("sender_for_gtk") };
+
+    if let Some(mut sender) = sender {
+        unsafe {
+            let sender_clone = Arc::clone(sender.as_mut());
+
+            app.connect_shutdown(move |_| {
+                let sender = sender_clone.lock().unwrap();
+                sender
+                    .send_blocking(Message::Close)
+                    .expect("The channel needs to be open.");
+            });
+        }
+    } else {
+        eprintln!("Failed to retrieve sender from application data.");
+    }
+
     let settings = Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .build();
@@ -186,16 +223,33 @@ fn build_ui(app: &Application) {
         .build();
     upload_dialog.add_button("Open", gtk::ResponseType::Accept);
     upload_dialog.set_default_response(gtk::ResponseType::Accept);
-    upload_dialog.connect_response(|dialog, response_type| {
-        match response_type {
-            gtk::ResponseType::Accept => match dialog.file() {
-                None => {}
-                Some(file_path) => {}
-            },
-            _ => {}
+
+    if let Some(mut sender) = sender {
+        unsafe {
+            let sender_clone = Arc::clone(sender.as_mut());
+
+            upload_dialog.connect_response(move |dialog, response_type| {
+                match response_type {
+                    gtk::ResponseType::Accept => match dialog.file() {
+                        None => {}
+                        Some(file_path) => {
+                            let sender = sender_clone.lock().unwrap();
+                            sender
+                                .send_blocking(Message::OpenFile(
+                                    file_path.path().unwrap().to_str().unwrap().to_string(),
+                                    // this is bad. i dont gaf
+                                ))
+                                .expect("The channel needs to be open.");
+                            dialog.destroy();
+                        }
+                    },
+                    _ => {}
+                }
+            });
         }
-        dialog.destroy();
-    });
+    } else {
+        eprintln!("Failed to retrieve sender from application data.");
+    }
 
     upload_button.connect_clicked(move |_| {
         upload_dialog.present();

@@ -81,12 +81,12 @@ impl Line {
 
 pub struct Draft {
     pub lines: Vec<Line>,
-    camera: Camera2D,
-    current_link: u32,
+    pub camera: Camera2D,
+    pub current_link: u32,
 }
 
 impl Draft {
-    pub fn new(file: &str, width: i32, height: i32) -> Draft {
+    pub fn new(file: String, width: i32, height: i32) -> Draft {
         let mut draft = Draft {
             lines: vec![],
             camera: Camera2D {
