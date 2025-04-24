@@ -21,6 +21,13 @@ pub struct Line {
     pub highlighted: bool,
 }
 
+pub enum Quadstate {
+    On,
+    Maybe,
+    Off,
+    No,
+}
+
 impl Line {
     // https://en.wikipedia.org/wiki/Distance_from_a_point_to_a_line#Line_defined_by_two_points
     pub fn dist(&self, point: Vector2) -> f32 {
@@ -96,6 +103,8 @@ pub struct Draft {
     pub camera: Camera2D,
     pub current_link: u32,
     pub first_down: Vector2,
+    pub width: i32,
+    pub height: i32,
 }
 
 impl Draft {
@@ -113,6 +122,8 @@ impl Draft {
             },
             current_link: 1,
             first_down: Vector2::zero(),
+            width,
+            height,
         };
 
         let file = File::open(file).unwrap();
@@ -217,9 +228,20 @@ impl Draft {
             self.first_down = mouse_world_pos;
         }
         if m.is_mouse_button_down(raylib::ffi::MouseButton::MOUSE_BUTTON_LEFT) && !move_camera {
+            let biggest_y = mouse_world_pos.y.max(self.first_down.y);
+            let smallest_y = mouse_world_pos.y.min(self.first_down.y);
+            let biggest_x = mouse_world_pos.x.max(self.first_down.x);
+            let smallest_x = mouse_world_pos.x.min(self.first_down.x);
+
             m.draw_rectangle_v(
-                self.first_down,
-                mouse_world_pos - self.first_down,
+                Vector2 {
+                    x: smallest_x,
+                    y: smallest_y,
+                },
+                Vector2 {
+                    x: biggest_x - smallest_x,
+                    y: biggest_y - smallest_y,
+                },
                 Color::GRAY,
             );
         }
@@ -231,6 +253,12 @@ impl Draft {
                     || rect_colision(self.first_down, mouse_world_pos - self.first_down, line.p2))
             {
                 line.highlighted = true;
+            } else if m.is_mouse_button_down(raylib::ffi::MouseButton::MOUSE_BUTTON_LEFT)
+                && !move_camera
+                && !m.is_key_down(raylib::ffi::KeyboardKey::KEY_LEFT_SHIFT)
+                && !line.hitbox(mouse_world_pos, 7.0 * (1.0 / self.camera.zoom))
+            {
+                line.highlighted = false;
             }
             m.draw_line_v(
                 line.p1,
@@ -239,6 +267,8 @@ impl Draft {
                     Color::DARKRED
                 } else if line.highlighted {
                     Color::RED
+                } else if line.pinned {
+                    Color::ORANGE
                 } else {
                     Color::GREEN
                 },
@@ -260,6 +290,38 @@ impl Draft {
                     );
                 }
             }
+        }
+    }
+    pub fn pin(&mut self, to: bool) {
+        for line in &mut self.lines {
+            if line.highlighted {
+                line.pinned = to;
+            }
+        }
+    }
+    pub fn get_pin_status(&mut self) -> Quadstate {
+        let mut all_false = true;
+        let mut all_true = true;
+        let mut selected_count = 0;
+
+        for line in &mut self.lines {
+            if line.highlighted && line.pinned {
+                all_false = false;
+            } else if line.highlighted && !line.pinned {
+                all_true = false;
+            }
+            if line.highlighted {
+                selected_count += 1;
+            }
+        }
+        if selected_count == 0 {
+            Quadstate::No
+        } else if all_true {
+            Quadstate::On
+        } else if all_false {
+            Quadstate::Off
+        } else {
+            Quadstate::Maybe
         }
     }
 }

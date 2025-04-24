@@ -5,11 +5,14 @@ use std::sync::{Arc, Mutex};
 use crate::glib::clone;
 use async_channel::{Receiver, Sender};
 use cloth::Cloth;
-use drafting::Draft;
+use drafting::{Draft, Quadstate};
 use raylib::prelude::*;
 mod cloth;
 mod drafting;
-use gtk::{Application, ApplicationWindow, FileChooserDialog, FileFilter, Label, glib};
+use gtk::{
+    Application, ApplicationWindow, CheckButton, FileChooserDialog, FileFilter, Label, Separator,
+    glib,
+};
 use gtk::{Box, Button, Notebook, prelude::*};
 
 const APP_ID: &str = "org.foxmoss.Weaverling";
@@ -25,6 +28,10 @@ enum State {
 enum Message {
     Close,
     OpenFile(String),
+    Pin(bool),
+    PinState(Quadstate),
+    Render,
+    Link(Option<u32>),
 }
 
 fn main() {
@@ -82,6 +89,8 @@ fn build_ui(app: &Application) {
                 },
                 current_link: 1,
                 first_down: Vector2::zero(),
+                width: 10,
+                height: 10,
             };
 
             let mut state = State::FilePicker;
@@ -118,10 +127,22 @@ fn build_ui(app: &Application) {
                         Message::Close => {
                             break;
                         }
+                        Message::Pin(state) => {
+                            draft.pin(state);
+                        }
+
                         Message::OpenFile(file) => {
                             draft = Draft::new(file, WIDTH, HEIGHT);
                             state = State::Drafting;
                         }
+                        Message::PinState(_) => {}
+                        Message::Render => {
+                            state = State::Rendering;
+                            cloth = Cloth::generate_from_draft(&draft, 0.1, 1.4);
+                            paused = true;
+                            rl.disable_cursor();
+                        }
+                        Message::Link(l) => {}
                     },
                     _ => {}
                 }
@@ -133,11 +154,10 @@ fn build_ui(app: &Application) {
                         d.draw_text("Waiting for file...", 20, 20, 30, Color::BLACK);
                     }
                     State::Drafting => {
-                        if d.is_key_pressed(KeyboardKey::KEY_ENTER) {
-                            state = State::Rendering;
-                            cloth = Cloth::generate_from_draft(&draft, 0.1, 1.4);
-                            paused = true;
-                            d.disable_cursor();
+                        if d.is_mouse_button_down(raylib::ffi::MouseButton::MOUSE_BUTTON_LEFT) {
+                            sender_for_raylib
+                                .send_blocking(Message::PinState(draft.get_pin_status()))
+                                .expect("The channel needs to be open.");
                         }
                         draft.draw(&mut d);
                     }
@@ -179,31 +199,92 @@ fn build_ui(app: &Application) {
         }
     ));
 
-    glib::spawn_future_local(clone!(
-        #[weak]
-        app,
-        async move {
-            while let Ok(message) = receiver_for_gtk.recv().await {
-                match message {
-                    Message::Close => {
-                        app.active_window().unwrap().close();
-                    }
-                    Message::OpenFile(file) => {
-                        todo!()
-                    }
-                }
-            }
-        }
-    ));
-
     let settings = Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .build();
     let design = Box::builder()
         .orientation(gtk::Orientation::Vertical)
-        .width_request(600)
-        .height_request(600)
+        .width_request(300)
+        .height_request(200)
+        .margin_top(8)
         .build();
+
+    let edit_container = Box::builder()
+        .halign(gtk::Align::Center)
+        .valign(gtk::Align::Center)
+        .orientation(gtk::Orientation::Vertical)
+        .visible(false)
+        .build();
+
+    let render_container = Box::builder()
+        .halign(gtk::Align::Center)
+        .valign(gtk::Align::Center)
+        .orientation(gtk::Orientation::Vertical)
+        .visible(false)
+        .build();
+
+    let continue_button = Button::builder().build();
+    continue_button.set_label("Render!");
+
+    continue_button.connect_clicked(clone!(
+        #[strong]
+        sender_for_gtk,
+        move |button| {
+            sender_for_gtk
+                .borrow_mut()
+                .send_blocking(Message::Render)
+                .expect("The channel needs to be open.");
+            render_container.show();
+            button.parent().unwrap().hide();
+        }
+    ));
+
+    let pin_button = CheckButton::builder().build();
+    pin_button.set_label(Some("Pinned"));
+
+    let current_pin_state = Rc::new(RefCell::new(Quadstate::No));
+    pin_button.connect_toggled(clone!(
+        #[strong]
+        current_pin_state,
+        move |pin| {
+            *current_pin_state.borrow_mut() = if pin.is_active() {
+                Quadstate::On
+            } else {
+                Quadstate::Off
+            };
+            pin.set_inconsistent(false);
+        }
+    ));
+
+    let apply_button = Button::builder().build();
+    apply_button.set_label("Apply");
+
+    apply_button.connect_clicked(clone!(
+        #[strong]
+        sender_for_gtk,
+        #[strong]
+        current_pin_state,
+        move |_| {
+            let state = current_pin_state.borrow_mut();
+            let set_val = match *state {
+                Quadstate::On => true,
+                _ => false,
+            };
+            sender_for_gtk
+                .borrow_mut()
+                .send_blocking(Message::Pin(set_val))
+                .expect("The channel needs to be open.");
+        }
+    ));
+
+    edit_container.append(&pin_button);
+    edit_container.append(&apply_button);
+    let seperator = Separator::builder()
+        .margin_top(10)
+        .margin_bottom(10)
+        .build();
+    edit_container.append(&seperator);
+    edit_container.append(&continue_button);
 
     let upload_container = Box::builder()
         .halign(gtk::Align::Center)
@@ -215,7 +296,6 @@ fn build_ui(app: &Application) {
     let filter = FileFilter::new();
     filter.add_suffix("svg");
 
-    let upload_dialog_button = Button::builder().build();
     let upload_dialog = FileChooserDialog::builder()
         .action(gtk::FileChooserAction::Open)
         .title("Pick a design")
@@ -245,12 +325,14 @@ fn build_ui(app: &Application) {
         }
     });
 
+    design.append(&upload_container);
+    design.append(&edit_container);
+
     upload_button.connect_clicked(move |upload_button| {
         upload_dialog.present();
-        upload_button.hide();
+        upload_container.hide();
+        edit_container.show();
     });
-
-    design.append(&upload_container);
 
     let notebook = Notebook::builder().build();
     let design_tab = Label::builder().build();
@@ -267,5 +349,47 @@ fn build_ui(app: &Application) {
         .child(&notebook)
         .build();
 
+    glib::spawn_future_local(clone!(
+        #[weak]
+        app,
+        async move {
+            while let Ok(message) = receiver_for_gtk.recv().await {
+                match message {
+                    Message::Close => {
+                        app.active_window().unwrap().close();
+                    }
+                    Message::OpenFile(file) => {
+                        todo!()
+                    }
+                    Message::Pin(_) => {
+                        todo!()
+                    }
+                    Message::PinState(state) => {
+                        pin_button.show();
+                        pin_button.set_inconsistent(false);
+
+                        match state {
+                            Quadstate::On => {
+                                pin_button.set_active(true);
+                            }
+                            Quadstate::Maybe => {
+                                pin_button.set_inconsistent(true);
+                            }
+                            Quadstate::Off => {
+                                pin_button.set_active(false);
+                            }
+                            Quadstate::No => {
+                                pin_button.hide();
+                            }
+                        }
+
+                        *current_pin_state.borrow_mut() = state;
+                    }
+                    Message::Render => {}
+                    Message::Link(_) => {}
+                }
+            }
+        }
+    ));
     window.present();
 }
