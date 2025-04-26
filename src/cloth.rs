@@ -378,27 +378,27 @@ impl Cloth {
 
                 let diff = segment.frag.position - frag.position;
                 let dist = (frag.index - segment.frag.index).length();
-                let change = self.scale * dist - diff.length();
+                let change = self.scale - diff.length();
                 segment.frag.velocity += diff.normalized().scale_by(change * 0.5);
             }
-            let mut index_index = 0;
+            // let mut index_index = 0;
             for index in &segment.second_neighbor_index {
                 if !index.is_some() {
                     continue;
                 }
 
-                let far_frag = segment_memory[index.unwrap()];
-                let center = segment_memory[segment.neighbor_index[index_index]];
-                let targeted_pos: Vector3 = ((far_frag.position - center.position) * (-1.0 as f32));
-                let movement_vec = (targeted_pos - (segment.frag.position - center.position));
-                segment.frag.velocity +=
-                    movement_vec.normalized() * (movement_vec.length() * 0.1).min(0.1);
-
-                index_index += 1
+                //     let far_frag = segment_memory[index.unwrap()];
+                //     let center = segment_memory[segment.neighbor_index[index_index]];
+                //     let targeted_pos: Vector3 = ((far_frag.position - center.position) * (-1.0 as f32));
+                //     let movement_vec = (targeted_pos - (segment.frag.position - center.position));
+                //     segment.frag.velocity +=
+                //         movement_vec.normalized() * (movement_vec.length() * 0.1).min(0.1);
+                //
+                // index_index += 1
             }
 
             // terminal velocity so things stabilize quicker
-            let new_max = segment.frag.velocity.length().min(2.0);
+            let new_max = segment.frag.velocity.length().min(1.0);
             segment.frag.velocity = segment.frag.velocity.normalized() * new_max;
 
             if !segment.frag.pinned {
