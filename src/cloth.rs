@@ -1,7 +1,9 @@
+use async_channel::Sender;
 use raylib::prelude::*;
 use std::ops::Sub;
 use std::{clone, collections::HashMap, f32, usize};
 
+use crate::Message;
 use crate::drafting::{Draft, Line};
 
 #[derive(PartialEq, Eq, Clone, Copy)]
@@ -167,7 +169,12 @@ impl Cloth {
         }
         ret
     }
-    pub fn generate_from_draft(draft: &Draft, scale: f32, detail: f32) -> Self {
+    pub fn generate_from_draft(
+        draft: &Draft,
+        scale: f32,
+        detail: f32,
+        sender: &Sender<Message>,
+    ) -> Self {
         let mut segments: Vec<ClothSegment> = vec![];
         let mut segment_links: HashMap<u32, Vec<u32>> = HashMap::new();
         let mut segment_frags: Vec<ClothSegmentFrag> = vec![];
@@ -179,6 +186,11 @@ impl Cloth {
         let mut y_index_max = 0;
         let mut insert_index: u32 = 0;
         while x < max_bound.x {
+            sender
+                .send_blocking(Message::RenderProgress(
+                    (((x - min_bound.x) / (max_bound.x - min_bound.x)) / 2.0) as f64,
+                ))
+                .expect("The channel needs to be open.");
             let mut check = Vector2 { x, y: min_bound.y };
             let mut confirmed_lines: Vec<Line> = vec![];
             let mut y_step = 0;
@@ -275,6 +287,11 @@ impl Cloth {
 
         let mut ret = Cloth { segments, scale };
         for x in 0..x_index_max {
+            sender
+                .send_blocking(Message::RenderProgress(
+                    ((x as f32 / x_index_max as f32) / 2.0 + 0.5) as f64,
+                ))
+                .expect("The channel needs to be open.");
             for y in 0..y_index_max {
                 match ret.find_index_info(Index3 { x, y: 0, z: y }) {
                     None => {}
@@ -313,6 +330,10 @@ impl Cloth {
                 }
             }
         }
+        sender
+            .send_blocking(Message::RenderProgress(1.0))
+            .expect("The channel needs to be open.");
+
         ret
     }
 

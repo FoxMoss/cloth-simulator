@@ -209,14 +209,6 @@ impl Draft {
         let scale = 0.2 * wheel;
         self.camera.zoom = self.camera.zoom + scale;
 
-        d.draw_text(
-            format!("Link number: {}", self.current_link).as_str(),
-            10,
-            40,
-            20,
-            Color::BLACK,
-        );
-
         let mut m = d.begin_mode2D(self.camera);
 
         if m.is_mouse_button_pressed(raylib::ffi::MouseButton::MOUSE_BUTTON_LEFT) && !move_camera {
@@ -299,6 +291,14 @@ impl Draft {
             }
         }
     }
+    pub fn link(&mut self, link: Option<u32>) {
+        for line in &mut self.lines {
+            if line.highlighted {
+                line.link = link;
+            }
+        }
+    }
+
     pub fn get_pin_status(&mut self) -> Quadstate {
         let mut all_false = true;
         let mut all_true = true;

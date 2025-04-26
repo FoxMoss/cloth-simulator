@@ -10,8 +10,8 @@ use raylib::prelude::*;
 mod cloth;
 mod drafting;
 use gtk::{
-    Application, ApplicationWindow, CheckButton, FileChooserDialog, FileFilter, Label, Separator,
-    glib,
+    Application, ApplicationWindow, CheckButton, FileChooserDialog, FileFilter, Label, ProgressBar,
+    Separator, SpinButton, glib,
 };
 use gtk::{Box, Button, Notebook, prelude::*};
 
@@ -32,6 +32,7 @@ enum Message {
     PinState(Quadstate),
     Render,
     Link(Option<u32>),
+    RenderProgress(f64),
 }
 
 fn main() {
@@ -138,11 +139,15 @@ fn build_ui(app: &Application) {
                         Message::PinState(_) => {}
                         Message::Render => {
                             state = State::Rendering;
-                            cloth = Cloth::generate_from_draft(&draft, 0.1, 1.4);
+                            cloth =
+                                Cloth::generate_from_draft(&draft, 0.1, 1.4, &sender_for_raylib);
                             paused = true;
                             rl.disable_cursor();
                         }
-                        Message::Link(l) => {}
+                        Message::RenderProgress(_) => {}
+                        Message::Link(l) => {
+                            draft.link(l);
+                        }
                     },
                     _ => {}
                 }
@@ -223,24 +228,69 @@ fn build_ui(app: &Application) {
         .visible(false)
         .build();
 
-    let continue_button = Button::builder().build();
-    continue_button.set_label("Render!");
+    let progress_bar = ProgressBar::builder().width_request(200).build();
+    progress_bar.set_show_text(true); // this isnt true by default TODO: make bug request
+    progress_bar.set_text(Some("Rasterizing..."));
 
-    continue_button.connect_clicked(clone!(
+    let done_text = Label::builder().visible(false).build();
+    done_text.set_text("Done!");
+    let close_button = Button::builder().visible(false).build();
+    close_button.set_label("Quit.");
+    close_button.connect_clicked(clone!(
         #[strong]
         sender_for_gtk,
-        move |button| {
+        move |_| {
             sender_for_gtk
                 .borrow_mut()
-                .send_blocking(Message::Render)
+                .send_blocking(Message::Close)
                 .expect("The channel needs to be open.");
-            render_container.show();
-            button.parent().unwrap().hide();
         }
     ));
 
-    let pin_button = CheckButton::builder().build();
+    render_container.append(&progress_bar);
+    render_container.append(&done_text);
+    render_container.append(&close_button);
+
+    let apply_button = Button::builder().build();
+    apply_button.set_label("Back");
+
+    apply_button.connect_clicked(clone!(
+        #[strong]
+        sender_for_gtk,
+        move |_| {
+            sender_for_gtk
+                .borrow_mut()
+                .send_blocking(Message::Pin(false))
+                .expect("The channel needs to be open.");
+        }
+    ));
+
+    let continue_button = Button::builder().build();
+    continue_button.set_label("Render!");
+
+    let link_label = Label::builder().margin_top(6).margin_bottom(6).build();
+    link_label.set_label("Link Number");
+
+    let current_spin_state = Rc::new(RefCell::new(0 as u32));
+    let spin_button = SpinButton::builder().margin_top(6).margin_bottom(6).build();
+    spin_button.set_range(0.0, 100.0);
+    spin_button.set_increments(1.0, 100.0);
+    spin_button.connect_value_changed(clone!(
+        #[strong]
+        current_spin_state,
+        move |spin| {
+            *current_spin_state.borrow_mut() = spin.value() as u32;
+        }
+    ));
+
+    let pin_button = CheckButton::builder()
+        .margin_top(6)
+        .margin_bottom(6)
+        .build();
     pin_button.set_label(Some("Pinned"));
+
+    let link_button = Button::builder().build();
+    link_button.set_label("Link");
 
     let current_pin_state = Rc::new(RefCell::new(Quadstate::No));
     pin_button.connect_toggled(clone!(
@@ -277,8 +327,27 @@ fn build_ui(app: &Application) {
         }
     ));
 
+    link_button.connect_clicked(clone!(
+        #[strong]
+        sender_for_gtk,
+        #[strong]
+        current_spin_state,
+        move |_| {
+            let state = current_spin_state.borrow_mut();
+            sender_for_gtk
+                .borrow_mut()
+                .send_blocking(Message::Link(if *state != 0 { Some(*state) } else { None }))
+                .expect("The channel needs to be open.");
+        }
+    ));
+
     edit_container.append(&pin_button);
     edit_container.append(&apply_button);
+
+    edit_container.append(&link_label);
+    edit_container.append(&spin_button);
+    edit_container.append(&link_button);
+
     let seperator = Separator::builder()
         .margin_top(10)
         .margin_bottom(10)
@@ -306,27 +375,47 @@ fn build_ui(app: &Application) {
 
     upload_container.append(&upload_button);
 
-    upload_dialog.connect_response(move |dialog, response_type| {
-        match response_type {
-            gtk::ResponseType::Accept => match dialog.file() {
-                None => {}
-                Some(file_path) => {
-                    sender_for_gtk
-                        .borrow_mut()
-                        .send_blocking(Message::OpenFile(
-                            // this is bad. i dont gaf
-                            file_path.path().unwrap().to_str().unwrap().to_string(),
-                        ))
-                        .expect("The channel needs to be open.");
-                    dialog.destroy();
-                }
-            },
-            _ => {}
+    upload_dialog.connect_response(clone!(
+        #[strong]
+        sender_for_gtk,
+        move |dialog, response_type| {
+            match response_type {
+                gtk::ResponseType::Accept => match dialog.file() {
+                    None => {}
+                    Some(file_path) => {
+                        sender_for_gtk
+                            .borrow_mut()
+                            .send_blocking(Message::OpenFile(
+                                // this is bad. i dont gaf
+                                file_path.path().unwrap().to_str().unwrap().to_string(),
+                            ))
+                            .expect("The channel needs to be open.");
+                        dialog.destroy();
+                    }
+                },
+                _ => {}
+            }
         }
-    });
+    ));
 
     design.append(&upload_container);
     design.append(&edit_container);
+    design.append(&render_container);
+
+    continue_button.connect_clicked(clone!(
+        #[strong]
+        sender_for_gtk,
+        move |button| {
+            print!("showing\n");
+            render_container.show();
+            button.parent().unwrap().hide();
+
+            sender_for_gtk
+                .borrow_mut()
+                .send_blocking(Message::Render)
+                .expect("The channel needs to be open.");
+        }
+    ));
 
     upload_button.connect_clicked(move |upload_button| {
         upload_dialog.present();
@@ -349,6 +438,10 @@ fn build_ui(app: &Application) {
         .child(&notebook)
         .build();
 
+    pin_button.hide();
+    link_label.hide();
+    spin_button.hide();
+    link_button.hide();
     glib::spawn_future_local(clone!(
         #[weak]
         app,
@@ -366,6 +459,9 @@ fn build_ui(app: &Application) {
                     }
                     Message::PinState(state) => {
                         pin_button.show();
+                        link_label.show();
+                        spin_button.show();
+                        link_button.show();
                         pin_button.set_inconsistent(false);
 
                         match state {
@@ -380,10 +476,22 @@ fn build_ui(app: &Application) {
                             }
                             Quadstate::No => {
                                 pin_button.hide();
+                                link_label.hide();
+                                spin_button.hide();
+                                link_button.hide();
                             }
                         }
 
                         *current_pin_state.borrow_mut() = state;
+                    }
+                    Message::RenderProgress(prog) => {
+                        print!("prog: {}%\n", prog * 100.0);
+                        progress_bar.set_fraction(prog as f64);
+                        if prog == 1.0 {
+                            done_text.show();
+                            close_button.show();
+                            progress_bar.hide();
+                        }
                     }
                     Message::Render => {}
                     Message::Link(_) => {}
