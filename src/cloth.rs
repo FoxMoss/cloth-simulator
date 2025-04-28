@@ -1,7 +1,7 @@
 use async_channel::Sender;
 use raylib::prelude::*;
 use std::ops::Sub;
-use std::{clone, collections::HashMap, f32, usize};
+use std::{collections::HashMap, f32, usize};
 
 use crate::Message;
 use crate::drafting::{Draft, Line};
@@ -31,38 +31,51 @@ impl Index3 {
 
 impl Index3 {
     pub fn get_neighbors(&self) -> (Vec<Self>, Vec<Self>) {
-        let neighbors: Vec<Self> = vec![
-            Self {
-                x: self.x + 1,
-                y: self.y,
-                z: self.z,
-            },
-            Self {
-                x: self.x - 1,
-                y: self.y,
-                z: self.z,
-            },
-            Self {
-                x: self.x,
-                y: self.y + 1,
-                z: self.z,
-            },
-            Self {
-                x: self.x,
-                y: self.y - 1,
-                z: self.z,
-            },
-            Self {
-                x: self.x,
-                y: self.y,
-                z: self.z + 1,
-            },
-            Self {
-                x: self.x,
-                y: self.y,
-                z: self.z - 1,
-            },
-        ];
+        let mut neighbors: Vec<Self> = vec![];
+        let scale = 2;
+        // let neighbors: Vec<Self> = vec![
+        //     Self {
+        //         x: self.x + 1,
+        //         y: self.y,
+        //         z: self.z,
+        //     },
+        //     Self {
+        //         x: self.x - 1,
+        //         y: self.y,
+        //         z: self.z,
+        //     },
+        //     Self {
+        //         x: self.x,
+        //         y: self.y + 1,
+        //         z: self.z,
+        //     },
+        //     Self {
+        //         x: self.x,
+        //         y: self.y - 1,
+        //         z: self.z,
+        //     },
+        //     Self {
+        //         x: self.x,
+        //         y: self.y,
+        //         z: self.z + 1,
+        //     },
+        //     Self {
+        //         x: self.x,
+        //         y: self.y,
+        //         z: self.z - 1,
+        //     },
+        // ];
+        for x in (-scale)..=scale {
+            for y in (-scale)..=scale {
+                for z in (-scale)..=scale {
+                    neighbors.push(Self {
+                        x: self.x + x,
+                        y: self.y + y,
+                        z: self.z + z,
+                    });
+                }
+            }
+        }
         let second_neighbors: Vec<Self> = vec![
             Self {
                 x: self.x + 2,
@@ -108,7 +121,8 @@ pub struct ClothSegmentFrag {
     pub velocity: Vector3,
     pinned: bool,
     pub link_vector: Option<f32>,
-    pub rotation: Vector3,
+    pub link_number: Option<u32>,
+    pub line_id: usize,
 }
 pub struct ClothSegment {
     frag: ClothSegmentFrag,
@@ -116,7 +130,6 @@ pub struct ClothSegment {
     neighbor_index: Vec<usize>,
     second_neighbors: Vec<Option<Index3>>,
     second_neighbor_index: Vec<Option<usize>>,
-    pub link_number: Option<u32>,
     pub index: usize,
 }
 
@@ -142,17 +155,13 @@ impl Cloth {
                         velocity: Vector3::zero(),
                         pinned: x == 0,
                         link_vector: None,
-                        rotation: Vector3 {
-                            x: 0.0,
-                            y: 1.0,
-                            z: 0.0,
-                        },
+                        link_number: None,
+                        line_id: 0,
                     },
                     neighbors: vec![],
                     neighbor_index: vec![],
                     second_neighbors: vec![],
                     second_neighbor_index: vec![],
-                    link_number: None,
                     index,
                 });
                 index += 1;
@@ -192,7 +201,6 @@ impl Cloth {
                 ))
                 .expect("The channel needs to be open.");
             let mut check = Vector2 { x, y: min_bound.y };
-            let mut confirmed_lines: Vec<Line> = vec![];
             let mut y_step = 0;
 
             let mut flip_points: Vec<f32> = vec![];
@@ -212,6 +220,7 @@ impl Cloth {
                 let mut pinned = false;
                 let mut link_vector: Option<f32> = None;
                 let mut link_number: Option<u32> = None;
+                let mut line_id: usize = 0;
                 for line in &draft.lines {
                     if line.hitbox(check, detail) {
                         if line.pinned {
@@ -222,6 +231,7 @@ impl Cloth {
                             link_vector =
                                 Some((line.p1 - check).length() / (line.p1 - line.p2).length());
                             link_number = line.link;
+                            line_id = line.line_id;
                         }
                     }
                     if line.p1.x == line.p2.x {
@@ -249,11 +259,8 @@ impl Cloth {
                         velocity: Vector3::zero(),
                         pinned,
                         link_vector,
-                        rotation: Vector3 {
-                            x: 0.0,
-                            y: 1.0,
-                            z: 0.0,
-                        },
+                        link_number,
+                        line_id,
                     };
                     segments.push(ClothSegment {
                         frag,
@@ -261,7 +268,6 @@ impl Cloth {
                         neighbor_index: vec![],
                         second_neighbors: vec![],
                         second_neighbor_index: vec![],
-                        link_number,
                         index: insert_index as usize,
                     });
                     segment_frags.push(frag);
@@ -302,7 +308,7 @@ impl Cloth {
                         segment.second_neighbor_index = second_neighbors.1;
 
                         if segment.frag.link_vector.is_some() {
-                            let number = segment.link_number.unwrap();
+                            let number = segment.frag.link_number.unwrap();
                             let mut min_dist = f32::INFINITY;
                             let mut segment_index: Option<usize> = None;
                             for index in segment_links[&number].clone() {
@@ -338,6 +344,11 @@ impl Cloth {
     }
 
     pub fn draw(&self, r: &mut RaylibMode3D<'_, RaylibDrawHandle<'_>>) {
+        let mut segment_memory: Vec<ClothSegmentFrag> = vec![];
+        for segment in &self.segments {
+            segment_memory.push(segment.frag);
+        }
+
         for segment in &self.segments {
             r.draw_cube(
                 segment.frag.position,
@@ -346,16 +357,19 @@ impl Cloth {
                 self.scale,
                 if segment.frag.pinned {
                     color::Color::RED
-                } else if segment.link_number.is_some() {
+                } else if segment.frag.link_number.is_some() {
                     color::Color::BLUE
                 } else {
                     color::Color::GREEN
                 },
             );
+            for index in &segment.neighbor_index {
+                let frag = segment_memory[*index];
+            }
             r.draw_line_3D(
                 segment.frag.position,
-                segment.frag.position + segment.frag.rotation * self.scale * 2.0,
-                color::Color::GAINSBORO,
+                segment.frag.position + segment.frag.velocity,
+                color::Color::RED,
             );
         }
     }
@@ -372,34 +386,32 @@ impl Cloth {
                 z: 0.0,
             };
 
-            segment.frag.velocity /= 1.01;
+            let mut neighbor_forces = Vector3::zero();
             for index in &segment.neighbor_index {
                 let frag = segment_memory[*index];
 
-                let diff = segment.frag.position - frag.position;
-                let dist = (frag.index - segment.frag.index).length();
-                let change = self.scale - diff.length();
-                segment.frag.velocity += diff.normalized().scale_by(change * 0.5);
-            }
-            // let mut index_index = 0;
-            for index in &segment.second_neighbor_index {
-                if !index.is_some() {
-                    continue;
+                let diff = frag.position - segment.frag.position;
+                let mut dist = (frag.index - segment.frag.index).length();
+                let mut mult = 0.01;
+
+                // there should be a better way
+                if segment
+                    .frag
+                    .link_number
+                    .is_some_and(|a| frag.link_number.is_some_and(|b| a == b))
+                    && frag.line_id != segment.frag.line_id
+                {
+                    dist = 1.0;
+                    mult = 0.08;
                 }
 
-                //     let far_frag = segment_memory[index.unwrap()];
-                //     let center = segment_memory[segment.neighbor_index[index_index]];
-                //     let targeted_pos: Vector3 = ((far_frag.position - center.position) * (-1.0 as f32));
-                //     let movement_vec = (targeted_pos - (segment.frag.position - center.position));
-                //     segment.frag.velocity +=
-                //         movement_vec.normalized() * (movement_vec.length() * 0.1).min(0.1);
-                //
-                // index_index += 1
+                let change = (self.scale * dist) - diff.length();
+                let scaled = diff.normalized().scale_by(-change);
+                neighbor_forces += scaled.scale_by(mult);
             }
+            segment.frag.velocity += neighbor_forces;
 
-            // terminal velocity so things stabilize quicker
-            let new_max = segment.frag.velocity.length().min(1.0);
-            segment.frag.velocity = segment.frag.velocity.normalized() * new_max;
+            segment.frag.velocity *= 0.9;
 
             if !segment.frag.pinned {
                 segment.frag.position += segment.frag.velocity;
@@ -443,14 +455,6 @@ impl Cloth {
             second_ret_index.push(None);
         }
         ((ret, ret_index), (second_ret, second_ret_index))
-    }
-    pub fn find(&mut self, index: Index3) -> Option<&mut ClothSegment> {
-        for segment in self.segments.iter_mut() {
-            if segment.frag.index == index {
-                return Some(segment);
-            }
-        }
-        return None;
     }
 
     fn find_index_info(

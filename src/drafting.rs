@@ -19,6 +19,7 @@ pub struct Line {
     pub pinned: bool,
     pub link: Option<u32>,
     pub highlighted: bool,
+    pub line_id: usize,
 }
 
 pub enum Quadstate {
@@ -130,7 +131,9 @@ impl Draft {
         let file = BufReader::new(file);
         let parser = EventReader::new(file);
         let mut depth = 0;
+        let mut line_id = 0;
         for e in parser {
+            line_id += 1;
             match e {
                 Ok(XmlEvent::StartElement {
                     name, attributes, ..
@@ -160,6 +163,7 @@ impl Draft {
                             pinned: false,
                             link: None,
                             highlighted: false,
+                            line_id,
                         });
                     }
                     depth += 1;

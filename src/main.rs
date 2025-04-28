@@ -140,7 +140,7 @@ fn build_ui(app: &Application) {
                         Message::Render => {
                             state = State::Rendering;
                             cloth =
-                                Cloth::generate_from_draft(&draft, 0.1, 1.4, &sender_for_raylib);
+                                Cloth::generate_from_draft(&draft, 0.1, 2.0, &sender_for_raylib);
                             paused = true;
                             rl.disable_cursor();
                         }
@@ -417,7 +417,7 @@ fn build_ui(app: &Application) {
         }
     ));
 
-    upload_button.connect_clicked(move |upload_button| {
+    upload_button.connect_clicked(move |_| {
         upload_dialog.present();
         upload_container.hide();
         edit_container.show();
