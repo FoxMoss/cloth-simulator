@@ -1,11 +1,10 @@
-use async_channel::Sender;
-use raylib::ffi::Color;
+use async_channel::{Receiver, Sender};
 use raylib::prelude::*;
 use std::ops::Sub;
 use std::{collections::HashMap, f32, usize};
 
 use crate::Message;
-use crate::drafting::{Draft, Line};
+use crate::drafting::Draft;
 
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub struct Index3 {
@@ -137,6 +136,11 @@ pub struct ClothSegment {
 pub struct Cloth {
     pub segments: Vec<ClothSegment>,
     scale: f32,
+
+    pub gravity: f32,
+    pub drag: f32,
+    pub strength: f32,
+    pub seam_strength: f32,
 }
 
 impl Cloth {
@@ -168,10 +172,17 @@ impl Cloth {
                 index += 1;
             }
         }
-        let mut ret = Cloth { segments, scale };
+        let mut ret = Cloth {
+            segments,
+            scale,
+            gravity: 0.001,
+            drag: 0.9,
+            strength: 0.01,
+            seam_strength: 0.01 * 25.0,
+        };
         for x in 0..width {
             for y in 0..height {
-                let (segment, neighbors, second_neighbors) =
+                let (segment, neighbors, _) =
                     ret.find_index_info(Index3 { x, y: 0, z: y }).unwrap();
                 segment.neighbors = neighbors.0;
                 segment.neighbor_index = neighbors.1;
@@ -184,7 +195,12 @@ impl Cloth {
         scale: f32,
         detail: f32,
         sender: &Sender<Message>,
-    ) -> Self {
+        receiver: &Receiver<Message>,
+        gravity: f32,
+        drag: f32,
+        strength: f32,
+        seam_strength: f32,
+    ) -> Option<Self> {
         sender
             .send_blocking(Message::RenderProgress(0.0))
             .expect("The channel needs to be open.");
@@ -296,8 +312,22 @@ impl Cloth {
         }
         let x_index_max = x_step;
 
-        let mut ret = Cloth { segments, scale };
+        let mut ret = Cloth {
+            segments,
+            scale,
+            gravity,
+            drag,
+            strength,
+            seam_strength,
+        };
         for x in 0..x_index_max {
+            let cancel_check = receiver.try_recv();
+            match cancel_check {
+                Ok(Message::Back) => {
+                    return None;
+                }
+                _ => {}
+            }
             sender
                 .send_blocking(Message::RenderProgress(
                     ((x as f32 / x_index_max as f32) / 2.0 + 0.5) as f64,
@@ -345,7 +375,7 @@ impl Cloth {
             .send_blocking(Message::RenderProgress(1.0))
             .expect("The channel needs to be open.");
 
-        ret
+        Some(ret)
     }
 
     pub fn draw(&self, r: &mut RaylibMode3D<'_, RaylibDrawHandle<'_>>) {
@@ -390,15 +420,14 @@ impl Cloth {
                 }
             }
 
-            r.draw_line_3D(
-                segment.frag.position,
-                segment.frag.position + segment.frag.velocity,
-                color::Color::RED,
-            );
+            // r.draw_line_3D(
+            //     segment.frag.position,
+            //     segment.frag.position + segment.frag.velocity,
+            //     color::Color::RED,
+            // );
         }
         for quad in quads {
             let mut last_index = *quad.last().unwrap();
-            let final_index = *quad.first().unwrap();
             let mut traveled: Vec<u32> = vec![last_index];
             while traveled.len() != 4 {
                 for index in &quad {
@@ -456,7 +485,7 @@ impl Cloth {
         for segment in self.segments.iter_mut() {
             segment.frag.velocity += Vector3 {
                 x: 0.0,
-                y: -0.0006,
+                y: -self.gravity,
                 z: 0.0,
             };
 
@@ -466,7 +495,11 @@ impl Cloth {
 
                 let diff = frag.position - segment.frag.position;
                 let mut dist = (frag.index - segment.frag.index).length();
-                let mut mult = 0.01;
+                let mut mult = self.strength;
+
+                if segment.frag.pinned {
+                    mult = self.seam_strength;
+                }
 
                 // there should be a better way
                 if segment
@@ -476,7 +509,7 @@ impl Cloth {
                     && frag.line_id != segment.frag.line_id
                 {
                     dist = 1.0;
-                    mult = 0.08;
+                    mult = self.seam_strength;
                 }
 
                 let change = (self.scale * dist) - diff.length();
@@ -485,7 +518,7 @@ impl Cloth {
             }
             segment.frag.velocity += neighbor_forces;
 
-            segment.frag.velocity *= 0.9;
+            segment.frag.velocity *= self.drag;
 
             if !segment.frag.pinned {
                 segment.frag.position += segment.frag.velocity;

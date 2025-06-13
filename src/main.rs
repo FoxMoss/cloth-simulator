@@ -31,7 +31,7 @@ enum Message {
     OpenFile(String),
     Pin(bool),
     PinState(Quadstate),
-    Render(f64),
+    Render(f64, f64, f64, f64, f64),
     Link(Option<u32>),
     RenderProgress(f64),
 }
@@ -142,14 +142,27 @@ fn build_ui(app: &Application) {
                             state = State::Drafting;
                         }
                         Message::PinState(_) => {}
-                        Message::Render(scale) => {
+                        Message::Render(detail, gravity, drag, strength, seam_strength) => {
                             state = State::Rendering;
-                            cloth = Cloth::generate_from_draft(
+                            let cloth_res = Cloth::generate_from_draft(
                                 &draft,
                                 0.1,
-                                scale as f32,
+                                detail as f32,
                                 &sender_for_raylib,
+                                &receiver_for_raylib,
+                                gravity as f32,
+                                drag as f32,
+                                strength as f32,
+                                seam_strength as f32,
                             );
+                            match cloth_res {
+                                None => {
+                                    state = State::Drafting;
+                                }
+                                Some(c) => {
+                                    cloth = c;
+                                }
+                            }
                             paused = true;
                         }
                         Message::RenderProgress(_) => {}
@@ -248,11 +261,7 @@ fn build_ui(app: &Application) {
         .visible(false)
         .build();
     done_text.set_text("Done!");
-    let back_button = Button::builder()
-        .margin_top(6)
-        .margin_bottom(6)
-        .visible(false)
-        .build();
+    let back_button = Button::builder().margin_top(6).margin_bottom(6).build();
     back_button.set_label("Back");
     back_button.connect_clicked(clone!(
         #[strong]
@@ -383,8 +392,40 @@ fn build_ui(app: &Application) {
 
     let detail_button = SpinButton::builder().margin_top(6).margin_bottom(6).build();
     detail_button.set_range(0.0, 10.0);
+    detail_button.set_climb_rate(0.1);
+    detail_button.set_digits(3);
     detail_button.set_increments(0.1, 10.0);
     detail_button.set_value(2.0);
+
+    let gravity_label = Label::builder().margin_top(6).margin_bottom(6).build();
+    gravity_label.set_label("Gravity");
+
+    let gravity_button = SpinButton::builder().margin_top(6).margin_bottom(6).build();
+    gravity_button.set_range(-1.0, 1.0);
+    gravity_button.set_climb_rate(0.001);
+    gravity_button.set_digits(5);
+    gravity_button.set_increments(0.001, 1.0);
+    gravity_button.set_value(0.001);
+
+    let drag_label = Label::builder().margin_top(6).margin_bottom(6).build();
+    drag_label.set_label("Drag");
+
+    let drag_button = SpinButton::builder().margin_top(6).margin_bottom(6).build();
+    drag_button.set_range(0.0, 1.0);
+    drag_button.set_climb_rate(0.01);
+    drag_button.set_digits(4);
+    drag_button.set_increments(0.01, 1.0);
+    drag_button.set_value(0.9);
+
+    let strength_label = Label::builder().margin_top(6).margin_bottom(6).build();
+    strength_label.set_label("Strength");
+
+    let strength_button = SpinButton::builder().margin_top(6).margin_bottom(6).build();
+    strength_button.set_range(0.0, 1.0);
+    strength_button.set_climb_rate(0.01);
+    strength_button.set_digits(4);
+    strength_button.set_increments(0.01, 1.0);
+    strength_button.set_value(0.02);
 
     edit_container.append(&pin_button);
     edit_container.append(&apply_button);
@@ -397,9 +438,20 @@ fn build_ui(app: &Application) {
         .margin_top(10)
         .margin_bottom(10)
         .build();
+    let seperator2 = Separator::builder()
+        .margin_top(10)
+        .margin_bottom(10)
+        .build();
 
+    edit_container.append(&seperator2);
     edit_container.append(&detail_label);
     edit_container.append(&detail_button);
+    edit_container.append(&gravity_label);
+    edit_container.append(&gravity_button);
+    edit_container.append(&drag_label);
+    edit_container.append(&drag_button);
+    edit_container.append(&strength_label);
+    edit_container.append(&strength_button);
 
     edit_container.append(&seperator);
     edit_container.append(&continue_button);
@@ -452,6 +504,12 @@ fn build_ui(app: &Application) {
         sender_for_gtk,
         #[strong]
         detail_button,
+        #[strong]
+        gravity_button,
+        #[strong]
+        drag_button,
+        #[strong]
+        strength_button,
         move |button| {
             print!("showing\n");
             button.parent().unwrap().next_sibling().unwrap().show();
@@ -459,7 +517,13 @@ fn build_ui(app: &Application) {
 
             sender_for_gtk
                 .borrow_mut()
-                .send_blocking(Message::Render(detail_button.value()))
+                .send_blocking(Message::Render(
+                    detail_button.value(),
+                    gravity_button.value(),
+                    drag_button.value(),
+                    strength_button.value(),
+                    strength_button.value() * 25.0,
+                ))
                 .expect("The channel needs to be open.");
         }
     ));
@@ -541,17 +605,15 @@ fn build_ui(app: &Application) {
                         if prog == 0.0 {
                             done_text.hide();
                             close_button.hide();
-                            back_button.hide();
                             progress_bar.show();
                         }
                         if prog == 1.0 {
                             done_text.show();
                             close_button.show();
-                            back_button.show();
                             progress_bar.hide();
                         }
                     }
-                    Message::Render(_) => {}
+                    Message::Render(_, _, _, _, _) => {}
                     Message::Link(_) => {}
                     Message::Back => {}
                 }
