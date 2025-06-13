@@ -1,4 +1,5 @@
 use async_channel::Sender;
+use raylib::ffi::Color;
 use raylib::prelude::*;
 use std::ops::Sub;
 use std::{collections::HashMap, f32, usize};
@@ -353,27 +354,96 @@ impl Cloth {
             segment_memory.push(segment.frag);
         }
 
+        let mut quads: Vec<Vec<u32>> = vec![];
+
         for segment in &self.segments {
-            r.draw_cube(
-                segment.frag.position,
-                self.scale,
-                self.scale,
-                self.scale,
-                if segment.frag.pinned {
-                    color::Color::RED
-                } else if segment.frag.link_number.is_some() {
-                    color::Color::BLUE
-                } else {
-                    color::Color::GREEN
-                },
-            );
-            for index in &segment.neighbor_index {
-                let frag = segment_memory[*index];
+            // r.draw_cube(
+            //     segment.frag.position,
+            //     self.scale,
+            //     self.scale,
+            //     self.scale,
+            //     if segment.frag.pinned {
+            //         color::Color::RED
+            //     } else if segment.frag.link_number.is_some() {
+            //         color::Color::BLUE
+            //     } else {
+            //         color::Color::GREEN
+            //     },
+            // );
+            for x_dir in [-1, 1] {
+                for y_dir in [-1, 1] {
+                    let mut quad: Vec<u32> = vec![];
+                    for index in &segment.neighbor_index {
+                        let frag = segment_memory[*index];
+                        let a_value: i32 = frag.index.x - segment.frag.index.x;
+                        let b_value: i32 = frag.index.z - segment.frag.index.z;
+                        if a_value.abs() > 1 || b_value.abs() > 1 {
+                            continue;
+                        }
+                        if a_value / x_dir >= 0 && b_value / y_dir >= 0 {
+                            quad.push(*index as u32);
+                        }
+                    }
+                    if quad.len() == 4 {
+                        quads.push(quad);
+                    }
+                }
             }
+
             r.draw_line_3D(
                 segment.frag.position,
                 segment.frag.position + segment.frag.velocity,
                 color::Color::RED,
+            );
+        }
+        for quad in quads {
+            let mut last_index = *quad.last().unwrap();
+            let final_index = *quad.first().unwrap();
+            let mut traveled: Vec<u32> = vec![last_index];
+            while traveled.len() != 4 {
+                for index in &quad {
+                    if traveled.contains(&index) {
+                        continue;
+                    }
+
+                    let index_pos = segment_memory[*index as usize].index;
+                    let last_index_pos = segment_memory[last_index as usize].index;
+
+                    if (index_pos.x - last_index_pos.x).abs()
+                        + (index_pos.z - last_index_pos.z).abs()
+                        != 1
+                    {
+                        continue;
+                    }
+
+                    r.draw_line_3D(
+                        segment_memory[last_index as usize].position,
+                        segment_memory[*index as usize].position,
+                        if segment_memory[*index as usize].pinned {
+                            color::Color::RED
+                        } else if segment_memory[*index as usize].link_number.is_some() {
+                            color::Color::BLUE
+                        } else {
+                            color::Color::GREEN
+                        },
+                    );
+                    traveled.push(*index);
+                    last_index = *index;
+                }
+            }
+            r.draw_line_3D(
+                segment_memory[*traveled.first().unwrap() as usize].position,
+                segment_memory[*traveled.last().unwrap() as usize].position,
+                if segment_memory[*traveled.first().unwrap() as usize].pinned {
+                    color::Color::RED
+                } else if segment_memory[*traveled.first().unwrap() as usize]
+                    .link_number
+                    .is_some()
+                {
+                    color::Color::BLUE
+                } else {
+                    color::Color::GREEN
+                },
             );
         }
     }
