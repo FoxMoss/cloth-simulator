@@ -184,6 +184,10 @@ impl Cloth {
         detail: f32,
         sender: &Sender<Message>,
     ) -> Self {
+        sender
+            .send_blocking(Message::RenderProgress(0.0))
+            .expect("The channel needs to be open.");
+
         let mut segments: Vec<ClothSegment> = vec![];
         let mut segment_links: HashMap<u32, Vec<u32>> = HashMap::new();
         let mut segment_frags: Vec<ClothSegmentFrag> = vec![];

@@ -27,10 +27,11 @@ enum State {
 
 enum Message {
     Close,
+    Back,
     OpenFile(String),
     Pin(bool),
     PinState(Quadstate),
-    Render,
+    Render(f64),
     Link(Option<u32>),
     RenderProgress(f64),
 }
@@ -132,17 +133,24 @@ fn build_ui(app: &Application) {
                             draft.pin(state);
                         }
 
+                        Message::Back => {
+                            state = State::Drafting;
+                        }
+
                         Message::OpenFile(file) => {
                             draft = Draft::new(file, WIDTH, HEIGHT);
                             state = State::Drafting;
                         }
                         Message::PinState(_) => {}
-                        Message::Render => {
+                        Message::Render(scale) => {
                             state = State::Rendering;
-                            cloth =
-                                Cloth::generate_from_draft(&draft, 0.1, 2.0, &sender_for_raylib);
+                            cloth = Cloth::generate_from_draft(
+                                &draft,
+                                0.1,
+                                scale as f32,
+                                &sender_for_raylib,
+                            );
                             paused = true;
-                            rl.disable_cursor();
                         }
                         Message::RenderProgress(_) => {}
                         Message::Link(l) => {
@@ -167,15 +175,22 @@ fn build_ui(app: &Application) {
                         draft.draw(&mut d);
                     }
                     State::Rendering => {
-                        d.update_camera(&mut cam, CameraMode::CAMERA_FREE);
+                        if !paused {
+                            d.update_camera(&mut cam, CameraMode::CAMERA_FREE);
+                        }
+
+                        if d.is_mouse_button_pressed(raylib::ffi::MouseButton::MOUSE_BUTTON_LEFT) {
+                            d.disable_cursor();
+                            paused = false;
+                        }
+                        if d.is_mouse_button_released(raylib::ffi::MouseButton::MOUSE_BUTTON_LEFT) {
+                            d.enable_cursor();
+                            paused = true;
+                        }
 
                         if paused {
                             d.draw_text("paused", 10, 400, 1, raylib::color::Color::BLACK);
                         }
-                        if d.is_key_pressed(KeyboardKey::KEY_P) {
-                            paused = !paused;
-                        }
-
                         {
                             let mut r = d.begin_mode3D(cam);
                             cloth.draw(&mut r);
@@ -184,11 +199,6 @@ fn build_ui(app: &Application) {
 
                         if !paused {
                             cloth.step();
-                        }
-
-                        if d.is_key_pressed(KeyboardKey::KEY_ENTER) {
-                            state = State::Drafting;
-                            d.enable_cursor();
                         }
                     }
                 }
@@ -232,9 +242,35 @@ fn build_ui(app: &Application) {
     progress_bar.set_show_text(true); // this isnt true by default TODO: make bug request
     progress_bar.set_text(Some("Rasterizing..."));
 
-    let done_text = Label::builder().visible(false).build();
+    let done_text = Label::builder()
+        .margin_top(6)
+        .margin_bottom(6)
+        .visible(false)
+        .build();
     done_text.set_text("Done!");
-    let close_button = Button::builder().visible(false).build();
+    let back_button = Button::builder()
+        .margin_top(6)
+        .margin_bottom(6)
+        .visible(false)
+        .build();
+    back_button.set_label("Back");
+    back_button.connect_clicked(clone!(
+        #[strong]
+        sender_for_gtk,
+        move |button| {
+            button.parent().unwrap().hide();
+            button.parent().unwrap().prev_sibling().unwrap().show();
+            sender_for_gtk
+                .borrow_mut()
+                .send_blocking(Message::Back)
+                .expect("The channel needs to be open.");
+        }
+    ));
+    let close_button = Button::builder()
+        .margin_top(6)
+        .margin_bottom(6)
+        .visible(false)
+        .build();
     close_button.set_label("Quit.");
     close_button.connect_clicked(clone!(
         #[strong]
@@ -249,9 +285,10 @@ fn build_ui(app: &Application) {
 
     render_container.append(&progress_bar);
     render_container.append(&done_text);
+    render_container.append(&back_button);
     render_container.append(&close_button);
 
-    let apply_button = Button::builder().build();
+    let apply_button = Button::builder().margin_top(6).margin_bottom(6).build();
     apply_button.set_label("Back");
 
     apply_button.connect_clicked(clone!(
@@ -265,7 +302,7 @@ fn build_ui(app: &Application) {
         }
     ));
 
-    let continue_button = Button::builder().build();
+    let continue_button = Button::builder().margin_top(6).margin_bottom(6).build();
     continue_button.set_label("Render!");
 
     let link_label = Label::builder().margin_top(6).margin_bottom(6).build();
@@ -289,7 +326,7 @@ fn build_ui(app: &Application) {
         .build();
     pin_button.set_label(Some("Pinned"));
 
-    let link_button = Button::builder().build();
+    let link_button = Button::builder().margin_top(6).margin_bottom(6).build();
     link_button.set_label("Link");
 
     let current_pin_state = Rc::new(RefCell::new(Quadstate::No));
@@ -306,7 +343,7 @@ fn build_ui(app: &Application) {
         }
     ));
 
-    let apply_button = Button::builder().build();
+    let apply_button = Button::builder().margin_top(6).margin_bottom(6).build();
     apply_button.set_label("Apply");
 
     apply_button.connect_clicked(clone!(
@@ -341,6 +378,14 @@ fn build_ui(app: &Application) {
         }
     ));
 
+    let detail_label = Label::builder().margin_top(6).margin_bottom(6).build();
+    detail_label.set_label("Detail (Lower == More Detail)");
+
+    let detail_button = SpinButton::builder().margin_top(6).margin_bottom(6).build();
+    detail_button.set_range(0.0, 10.0);
+    detail_button.set_increments(0.1, 10.0);
+    detail_button.set_value(2.0);
+
     edit_container.append(&pin_button);
     edit_container.append(&apply_button);
 
@@ -352,6 +397,10 @@ fn build_ui(app: &Application) {
         .margin_top(10)
         .margin_bottom(10)
         .build();
+
+    edit_container.append(&detail_label);
+    edit_container.append(&detail_button);
+
     edit_container.append(&seperator);
     edit_container.append(&continue_button);
 
@@ -398,24 +447,26 @@ fn build_ui(app: &Application) {
         }
     ));
 
-    design.append(&upload_container);
-    design.append(&edit_container);
-    design.append(&render_container);
-
     continue_button.connect_clicked(clone!(
         #[strong]
         sender_for_gtk,
+        #[strong]
+        detail_button,
         move |button| {
             print!("showing\n");
-            render_container.show();
+            button.parent().unwrap().next_sibling().unwrap().show();
             button.parent().unwrap().hide();
 
             sender_for_gtk
                 .borrow_mut()
-                .send_blocking(Message::Render)
+                .send_blocking(Message::Render(detail_button.value()))
                 .expect("The channel needs to be open.");
         }
     ));
+
+    design.append(&upload_container);
+    design.append(&edit_container);
+    design.append(&render_container);
 
     upload_button.connect_clicked(move |_| {
         upload_dialog.present();
@@ -487,14 +538,22 @@ fn build_ui(app: &Application) {
                     Message::RenderProgress(prog) => {
                         print!("prog: {}%\n", prog * 100.0);
                         progress_bar.set_fraction(prog as f64);
+                        if prog == 0.0 {
+                            done_text.hide();
+                            close_button.hide();
+                            back_button.hide();
+                            progress_bar.show();
+                        }
                         if prog == 1.0 {
                             done_text.show();
                             close_button.show();
+                            back_button.show();
                             progress_bar.hide();
                         }
                     }
-                    Message::Render => {}
+                    Message::Render(_) => {}
                     Message::Link(_) => {}
+                    Message::Back => {}
                 }
             }
         }
