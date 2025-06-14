@@ -31,7 +31,7 @@ enum Message {
     OpenFile(String),
     Pin(bool),
     PinState(Quadstate),
-    Render(f64, f64, f64, f64, f64),
+    Render(f64, u32, f64, f64, f64, f64),
     Link(Option<u32>),
     RenderProgress(f64),
 }
@@ -142,11 +142,19 @@ fn build_ui(app: &Application) {
                             state = State::Drafting;
                         }
                         Message::PinState(_) => {}
-                        Message::Render(detail, gravity, drag, strength, seam_strength) => {
+                        Message::Render(
+                            detail,
+                            stiffness,
+                            gravity,
+                            drag,
+                            strength,
+                            seam_strength,
+                        ) => {
                             state = State::Rendering;
                             let cloth_res = Cloth::generate_from_draft(
                                 &draft,
                                 0.1,
+                                stiffness,
                                 detail as f32,
                                 &sender_for_raylib,
                                 &receiver_for_raylib,
@@ -227,9 +235,6 @@ fn build_ui(app: &Application) {
         }
     ));
 
-    let settings = Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .build();
     let design = Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .width_request(300)
@@ -397,6 +402,15 @@ fn build_ui(app: &Application) {
     detail_button.set_increments(0.1, 10.0);
     detail_button.set_value(2.0);
 
+    let stiffness_label = Label::builder().margin_top(6).margin_bottom(6).build();
+    stiffness_label.set_label("Stiffness");
+
+    let stiffness_button = SpinButton::builder().margin_top(6).margin_bottom(6).build();
+    stiffness_button.set_range(0.0, 10.0);
+    stiffness_button.set_climb_rate(1.0);
+    stiffness_button.set_increments(1.0, 10.0);
+    stiffness_button.set_value(2.0);
+
     let gravity_label = Label::builder().margin_top(6).margin_bottom(6).build();
     gravity_label.set_label("Gravity");
 
@@ -427,32 +441,53 @@ fn build_ui(app: &Application) {
     strength_button.set_increments(0.01, 1.0);
     strength_button.set_value(0.02);
 
-    edit_container.append(&pin_button);
-    edit_container.append(&apply_button);
+    let edit_edit_container = Box::builder()
+        .halign(gtk::Align::Center)
+        .valign(gtk::Align::Center)
+        .margin_start(10)
+        .margin_end(10)
+        .orientation(gtk::Orientation::Vertical)
+        .build();
+    let settings_container = Box::builder()
+        .halign(gtk::Align::Center)
+        .valign(gtk::Align::Center)
+        .margin_start(10)
+        .margin_end(10)
+        .orientation(gtk::Orientation::Vertical)
+        .build();
 
-    edit_container.append(&link_label);
-    edit_container.append(&spin_button);
-    edit_container.append(&link_button);
+    let edit_notebook = Notebook::builder().build();
+    let edit_tab = Label::builder().build();
+    edit_tab.set_label("Edit");
+    let settings_tab = Label::builder().build();
+    settings_tab.set_label("Settings");
+    edit_notebook.append_page(&edit_edit_container, Some(&edit_tab));
+    edit_notebook.append_page(&settings_container, Some(&settings_tab));
+
+    edit_edit_container.append(&pin_button);
+    edit_edit_container.append(&apply_button);
+
+    edit_edit_container.append(&link_label);
+    edit_edit_container.append(&spin_button);
+    edit_edit_container.append(&link_button);
 
     let seperator = Separator::builder()
         .margin_top(10)
         .margin_bottom(10)
         .build();
-    let seperator2 = Separator::builder()
-        .margin_top(10)
-        .margin_bottom(10)
-        .build();
 
-    edit_container.append(&seperator2);
-    edit_container.append(&detail_label);
-    edit_container.append(&detail_button);
-    edit_container.append(&gravity_label);
-    edit_container.append(&gravity_button);
-    edit_container.append(&drag_label);
-    edit_container.append(&drag_button);
-    edit_container.append(&strength_label);
-    edit_container.append(&strength_button);
+    settings_container.append(&detail_label);
+    settings_container.append(&detail_button);
+    settings_container.append(&stiffness_label);
+    settings_container.append(&stiffness_button);
+    settings_container.append(&gravity_label);
+    settings_container.append(&gravity_button);
+    settings_container.append(&drag_label);
+    settings_container.append(&drag_button);
+    settings_container.append(&strength_label);
+    settings_container.append(&strength_button);
 
+    edit_container.append(&edit_notebook);
     edit_container.append(&seperator);
     edit_container.append(&continue_button);
 
@@ -505,13 +540,14 @@ fn build_ui(app: &Application) {
         #[strong]
         detail_button,
         #[strong]
+        stiffness_button,
+        #[strong]
         gravity_button,
         #[strong]
         drag_button,
         #[strong]
         strength_button,
         move |button| {
-            print!("showing\n");
             button.parent().unwrap().next_sibling().unwrap().show();
             button.parent().unwrap().hide();
 
@@ -519,6 +555,7 @@ fn build_ui(app: &Application) {
                 .borrow_mut()
                 .send_blocking(Message::Render(
                     detail_button.value(),
+                    stiffness_button.value() as u32,
                     gravity_button.value(),
                     drag_button.value(),
                     strength_button.value(),
@@ -543,10 +580,6 @@ fn build_ui(app: &Application) {
     design_tab.set_label("Design");
     notebook.append_page(&design, Some(&design_tab));
 
-    let settings_tab = Label::builder().build();
-    settings_tab.set_label("Settings");
-    notebook.append_page(&settings, Some(&settings_tab));
-
     let window = ApplicationWindow::builder()
         .application(app)
         .title("Weaverling")
@@ -557,6 +590,7 @@ fn build_ui(app: &Application) {
     link_label.hide();
     spin_button.hide();
     link_button.hide();
+    apply_button.hide();
     glib::spawn_future_local(clone!(
         #[weak]
         app,
@@ -577,6 +611,7 @@ fn build_ui(app: &Application) {
                         link_label.show();
                         spin_button.show();
                         link_button.show();
+                        apply_button.show();
                         pin_button.set_inconsistent(false);
 
                         match state {
@@ -594,13 +629,13 @@ fn build_ui(app: &Application) {
                                 link_label.hide();
                                 spin_button.hide();
                                 link_button.hide();
+                                apply_button.hide();
                             }
                         }
 
                         *current_pin_state.borrow_mut() = state;
                     }
                     Message::RenderProgress(prog) => {
-                        print!("prog: {}%\n", prog * 100.0);
                         progress_bar.set_fraction(prog as f64);
                         if prog == 0.0 {
                             done_text.hide();
@@ -613,9 +648,7 @@ fn build_ui(app: &Application) {
                             progress_bar.hide();
                         }
                     }
-                    Message::Render(_, _, _, _, _) => {}
-                    Message::Link(_) => {}
-                    Message::Back => {}
+                    _ => {}
                 }
             }
         }

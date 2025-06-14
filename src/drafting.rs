@@ -7,10 +7,7 @@ use raylib::{
 };
 use std::fs::File;
 use std::io::BufReader;
-use xml::{
-    common::Position,
-    reader::{EventReader, XmlEvent},
-};
+use xml::reader::{EventReader, XmlEvent};
 
 #[derive(PartialEq, Clone, Copy)]
 pub struct Line {

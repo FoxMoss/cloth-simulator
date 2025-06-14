@@ -1,6 +1,6 @@
 use async_channel::{Receiver, Sender};
 use raylib::prelude::*;
-use std::ops::Sub;
+use std::ops::{Add, Sub};
 use std::{collections::HashMap, f32, usize};
 
 use crate::Message;
@@ -23,6 +23,16 @@ impl Sub for Index3 {
         }
     }
 }
+impl Add for Index3 {
+    type Output = Index3;
+    fn add(self, v: Index3) -> Self {
+        Index3 {
+            x: self.x + v.x,
+            y: self.y + v.y,
+            z: self.z + v.z,
+        }
+    }
+}
 impl Index3 {
     pub fn length(&self) -> f32 {
         ((self.x.pow(2) + self.y.pow(2) + self.z.pow(2)) as f32).sqrt()
@@ -30,41 +40,9 @@ impl Index3 {
 }
 
 impl Index3 {
-    pub fn get_neighbors(&self) -> (Vec<Self>, Vec<Self>) {
+    pub fn get_neighbors(&self, stiffness: u32) -> (Vec<Self>, Vec<Self>) {
         let mut neighbors: Vec<Self> = vec![];
-        let scale = 2;
-        // let neighbors: Vec<Self> = vec![
-        //     Self {
-        //         x: self.x + 1,
-        //         y: self.y,
-        //         z: self.z,
-        //     },
-        //     Self {
-        //         x: self.x - 1,
-        //         y: self.y,
-        //         z: self.z,
-        //     },
-        //     Self {
-        //         x: self.x,
-        //         y: self.y + 1,
-        //         z: self.z,
-        //     },
-        //     Self {
-        //         x: self.x,
-        //         y: self.y - 1,
-        //         z: self.z,
-        //     },
-        //     Self {
-        //         x: self.x,
-        //         y: self.y,
-        //         z: self.z + 1,
-        //     },
-        //     Self {
-        //         x: self.x,
-        //         y: self.y,
-        //         z: self.z - 1,
-        //     },
-        // ];
+        let scale: i32 = stiffness as i32;
         for x in (-scale)..=scale {
             for y in (-scale)..=scale {
                 for z in (-scale)..=scale {
@@ -135,12 +113,14 @@ pub struct ClothSegment {
 
 pub struct Cloth {
     pub segments: Vec<ClothSegment>,
+    sections: Vec<Vec<usize>>,
     scale: f32,
 
     pub gravity: f32,
     pub drag: f32,
     pub strength: f32,
     pub seam_strength: f32,
+    pub stiffness: u32,
 }
 
 impl Cloth {
@@ -175,10 +155,12 @@ impl Cloth {
         let mut ret = Cloth {
             segments,
             scale,
+            sections: vec![],
             gravity: 0.001,
             drag: 0.9,
             strength: 0.01,
             seam_strength: 0.01 * 25.0,
+            stiffness: 2,
         };
         for x in 0..width {
             for y in 0..height {
@@ -193,6 +175,7 @@ impl Cloth {
     pub fn generate_from_draft(
         draft: &Draft,
         scale: f32,
+        stiffness: u32,
         detail: f32,
         sender: &Sender<Message>,
         receiver: &Receiver<Message>,
@@ -218,7 +201,7 @@ impl Cloth {
         while x < max_bound.x {
             sender
                 .send_blocking(Message::RenderProgress(
-                    (((x - min_bound.x) / (max_bound.x - min_bound.x)) / 2.0) as f64,
+                    (((x - min_bound.x) / (max_bound.x - min_bound.x)) / 3.0) as f64,
                 ))
                 .expect("The channel needs to be open.");
             let mut check = Vector2 { x, y: min_bound.y };
@@ -314,12 +297,39 @@ impl Cloth {
 
         let mut ret = Cloth {
             segments,
+            sections: vec![],
             scale,
             gravity,
             drag,
             strength,
             seam_strength,
+            stiffness,
         };
+
+        let mut sections: Vec<Vec<usize>> = vec![];
+        let mut total_so_far = 0;
+        'sectional: for segment in &ret.segments {
+            for section in &sections {
+                if section.contains(&segment.index) {
+                    continue 'sectional;
+                }
+            }
+            let section_res = ret.discover_section(
+                segment.index,
+                vec![],
+                sender,
+                receiver,
+                ret.segments.len(),
+                total_so_far,
+            );
+            if section_res.is_none() {
+                return None;
+            }
+            sections.push(section_res.unwrap());
+            total_so_far += sections.last().unwrap().len();
+        }
+        ret.sections = sections;
+
         for x in 0..x_index_max {
             let cancel_check = receiver.try_recv();
             match cancel_check {
@@ -330,7 +340,7 @@ impl Cloth {
             }
             sender
                 .send_blocking(Message::RenderProgress(
-                    ((x as f32 / x_index_max as f32) / 2.0 + 0.5) as f64,
+                    ((x as f32 / x_index_max as f32) / 3.0 + 2.0 / 3.0) as f64,
                 ))
                 .expect("The channel needs to be open.");
             for y in 0..y_index_max {
@@ -376,6 +386,62 @@ impl Cloth {
             .expect("The channel needs to be open.");
 
         Some(ret)
+    }
+
+    pub fn discover_section(
+        &self,
+        index: usize,
+        current_section: Vec<usize>,
+        sender: &Sender<Message>,
+        receiver: &Receiver<Message>,
+        length: usize,
+        total: usize,
+    ) -> Option<Vec<usize>> {
+        let mut current_section_copy = current_section;
+        current_section_copy.push(index);
+        let cancel_check = receiver.try_recv();
+        match cancel_check {
+            Ok(Message::Back) => {
+                return None;
+            }
+            _ => {}
+        }
+
+        sender
+            .send_blocking(Message::RenderProgress(
+                (1.0 / 3.0) + ((current_section_copy.len() + total) as f64 / length as f64) / 3.0,
+            ))
+            .expect("The channel needs to be open.");
+
+        let selected_index = self.segments[index].frag.index;
+        for x in -1..=1 {
+            for y in -1..=1 {
+                for z in -1..=1 {
+                    let searching_index = selected_index + Index3 { x, y, z };
+                    for segment in &self.segments {
+                        if current_section_copy.contains(&segment.index) {
+                            continue;
+                        }
+
+                        if segment.frag.index == searching_index {
+                            let current_section_copy_res = self.discover_section(
+                                segment.index,
+                                current_section_copy,
+                                sender,
+                                receiver,
+                                length,
+                                total,
+                            );
+                            if current_section_copy_res.is_none() {
+                                return None;
+                            }
+                            current_section_copy = current_section_copy_res.unwrap();
+                        }
+                    }
+                }
+            }
+        }
+        return Some(current_section_copy);
     }
 
     pub fn draw(&self, r: &mut RaylibMode3D<'_, RaylibDrawHandle<'_>>) {
@@ -490,7 +556,17 @@ impl Cloth {
             };
 
             let mut neighbor_forces = Vector3::zero();
+            let mut segment_section: Vec<usize> = vec![];
+            for section in &self.sections {
+                if section.contains(&segment.index) {
+                    segment_section = section.clone();
+                }
+            }
+
             for index in &segment.neighbor_index {
+                if *index == segment.index {
+                    continue;
+                }
                 let frag = segment_memory[*index];
 
                 let diff = frag.position - segment.frag.position;
@@ -500,6 +576,9 @@ impl Cloth {
                 if segment.frag.pinned {
                     mult = self.seam_strength;
                 }
+                if !segment_section.contains(index) {
+                    mult = 0.0;
+                }
 
                 // there should be a better way
                 if segment
@@ -508,7 +587,7 @@ impl Cloth {
                     .is_some_and(|a| frag.link_number.is_some_and(|b| a == b))
                     && frag.line_id != segment.frag.line_id
                 {
-                    dist = 1.0;
+                    dist = 0.0;
                     mult = self.seam_strength;
                 }
 
@@ -528,6 +607,7 @@ impl Cloth {
     fn get_neighbors(
         &self,
         index: Index3,
+        stiffness: u32,
     ) -> (
         (Vec<Index3>, Vec<usize>),
         (Vec<Option<Index3>>, Vec<Option<usize>>),
@@ -536,7 +616,7 @@ impl Cloth {
         let mut ret_index: Vec<usize> = vec![];
         let mut second_ret: Vec<Option<Index3>> = vec![];
         let mut second_ret_index: Vec<Option<usize>> = vec![];
-        let (neighbors, second_neighbors) = index.get_neighbors();
+        let (neighbors, second_neighbors) = index.get_neighbors(stiffness);
         for neighbor in neighbors {
             let mut neighbor_index = 0;
             for segment in &self.segments {
@@ -572,7 +652,7 @@ impl Cloth {
         (Vec<Index3>, Vec<usize>),
         (Vec<Option<Index3>>, Vec<Option<usize>>),
     )> {
-        let (neighbors, second_neighbors) = self.get_neighbors(index);
+        let (neighbors, second_neighbors) = self.get_neighbors(index, self.stiffness);
         for segment in self.segments.iter_mut() {
             if segment.frag.index == index {
                 return Some((segment, neighbors, second_neighbors));
