@@ -116,7 +116,7 @@ fn build_ui(app: &Application) {
                 45.0,
             );
 
-            let mut cloth = cloth::Cloth::generate_square(10, 10, 0.5);
+            let mut cloth = cloth::Cloth::generate_from_none();
 
             rl.set_target_fps(30);
 
