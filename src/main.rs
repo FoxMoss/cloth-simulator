@@ -636,6 +636,7 @@ fn build_ui(app: &Application) {
                         *current_pin_state.borrow_mut() = state;
                     }
                     Message::RenderProgress(prog) => {
+                        print!("prog {}%\n", prog * 100.0);
                         progress_bar.set_fraction(prog as f64);
                         if prog == 0.0 {
                             done_text.hide();

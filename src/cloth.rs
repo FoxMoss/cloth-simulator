@@ -226,7 +226,7 @@ impl Cloth {
                 let mut link_number: Option<u32> = None;
                 let mut line_id: usize = 0;
                 for line in &draft.lines {
-                    if line.hitbox(check, detail) {
+                    if line.hitbox(check, detail * 2.0) {
                         if line.pinned {
                             pinned = true;
                         }
