@@ -98,6 +98,7 @@ pub struct ClothSegmentFrag {
     position: Vector3,
     pub velocity: Vector3,
     pinned: bool,
+    rigid: bool,
     pub link_vector: Option<f32>,
     pub link_number: Option<u32>,
     pub line_id: usize,
@@ -189,18 +190,32 @@ impl Cloth {
                 let mut intersections: u32 = 0;
 
                 let mut pinned = false;
+                let mut rigid = false;
                 let mut link_vector: Option<f32> = None;
                 let mut link_number: Option<u32> = None;
                 let mut line_id: usize = 0;
                 for line in &draft.lines {
-                    if line.hitbox(check, detail * 2.0) {
+                    if line.hitbox(check, detail * 1.5) {
                         if line.pinned {
                             pinned = true;
                         }
 
+                        rigid = line.rigid;
+
                         if line.link.is_some() {
+                            let mut true_p1 = line.p1;
+                            let mut true_p2 = line.p2;
+
+                            // lower point should be p2 to avoid linking issues
+                            if line.p1.x < line.p2.x
+                                || (line.p1.x == line.p2.x && line.p1.y < line.p1.y)
+                            {
+                                true_p1 = line.p2;
+                                true_p2 = line.p1;
+                            }
+
                             link_vector =
-                                Some((line.p1 - check).length() / (line.p1 - line.p2).length());
+                                Some((true_p1 - check).length() / (true_p1 - true_p2).length());
                             link_number = line.link;
                             line_id = line.line_id;
                         }
@@ -229,6 +244,7 @@ impl Cloth {
                         },
                         velocity: Vector3::zero(),
                         pinned,
+                        rigid,
                         link_vector,
                         link_number,
                         line_id,
@@ -491,7 +507,9 @@ impl Cloth {
                     r.draw_line_3D(
                         segment_memory[last_index as usize].position,
                         segment_memory[*index as usize].position,
-                        if segment_memory[*index as usize].pinned {
+                        if segment_memory[*index as usize].rigid {
+                            color::Color::ORANGE
+                        } else if segment_memory[*index as usize].pinned {
                             color::Color::RED
                         } else if segment_memory[*index as usize].link_number.is_some() {
                             color::Color::BLUE
@@ -506,7 +524,9 @@ impl Cloth {
             r.draw_line_3D(
                 segment_memory[*traveled.first().unwrap() as usize].position,
                 segment_memory[*traveled.last().unwrap() as usize].position,
-                if segment_memory[*traveled.first().unwrap() as usize].pinned {
+                if segment_memory[*traveled.first().unwrap() as usize].rigid {
+                    color::Color::ORANGE
+                } else if segment_memory[*traveled.first().unwrap() as usize].pinned {
                     color::Color::RED
                 } else if segment_memory[*traveled.first().unwrap() as usize]
                     .link_number
@@ -520,10 +540,17 @@ impl Cloth {
         }
     }
     pub fn step(&mut self) {
+        let mut rigid_plane = 0.0;
+        let mut rigid_len = 0;
         let mut segment_memory: Vec<ClothSegmentFrag> = vec![];
         for segment in &self.segments {
+            if segment.frag.rigid {
+                rigid_plane += segment.frag.position.y;
+                rigid_len += 1;
+            }
             segment_memory.push(segment.frag);
         }
+        rigid_plane /= rigid_len as f32;
 
         for segment in self.segments.iter_mut() {
             segment.frag.velocity += Vector3 {
@@ -572,6 +599,15 @@ impl Cloth {
                 let scaled = diff.normalized().scale_by(-change);
                 neighbor_forces += scaled.scale_by(mult);
             }
+            if segment.frag.rigid {
+                let set_pos = Vector3 {
+                    x: 0.0,
+                    y: rigid_plane - segment.frag.position.y,
+                    z: 0.0,
+                };
+                neighbor_forces += set_pos * 0.3;
+            }
+
             segment.frag.velocity += neighbor_forces;
 
             segment.frag.velocity *= self.drag;

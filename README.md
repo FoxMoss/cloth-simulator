@@ -5,7 +5,7 @@
 
 See a demo here!
 
-[![Weaverling Demo](https://img.youtube.com/vi/8cWEMeNBL7o/0.jpg)](https://www.youtube.com/watch?v=8cWEMeNBL7o)
+[Weaverling Demo](https://youtu.be/doiuq2lDBu8)
 
 ## How To Compile
 On Linux `cmake` and `libgtk4` are required to compile raylib and Gtk4 respectively please check your own OS instructions for each binding.

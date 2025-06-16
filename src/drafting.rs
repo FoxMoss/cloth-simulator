@@ -14,6 +14,7 @@ pub struct Line {
     pub p1: Vector2,
     pub p2: Vector2,
     pub pinned: bool,
+    pub rigid: bool,
     pub link: Option<u32>,
     pub highlighted: bool,
     pub line_id: usize,
@@ -158,6 +159,7 @@ impl Draft {
                             p1,
                             p2,
                             pinned: false,
+                            rigid: false,
                             link: None,
                             highlighted: false,
                             line_id,
@@ -278,7 +280,7 @@ impl Draft {
                         format!("{}", link).as_str(),
                         (line.p1.x + (line.p2.x - line.p1.x) / 2.0) as i32,
                         (line.p1.y + (line.p2.y - line.p1.y) / 2.0) as i32,
-                        1,
+                        (1.0 / self.camera.zoom) as i32,
                         Color::BLACK,
                     );
                 }
@@ -289,6 +291,13 @@ impl Draft {
         for line in &mut self.lines {
             if line.highlighted {
                 line.pinned = to;
+            }
+        }
+    }
+    pub fn rigid(&mut self, to: bool) {
+        for line in &mut self.lines {
+            if line.highlighted {
+                line.rigid = to;
             }
         }
     }
@@ -309,6 +318,31 @@ impl Draft {
             if line.highlighted && line.pinned {
                 all_false = false;
             } else if line.highlighted && !line.pinned {
+                all_true = false;
+            }
+            if line.highlighted {
+                selected_count += 1;
+            }
+        }
+        if selected_count == 0 {
+            Quadstate::No
+        } else if all_true {
+            Quadstate::On
+        } else if all_false {
+            Quadstate::Off
+        } else {
+            Quadstate::Maybe
+        }
+    }
+    pub fn get_rigid_status(&mut self) -> Quadstate {
+        let mut all_false = true;
+        let mut all_true = true;
+        let mut selected_count = 0;
+
+        for line in &mut self.lines {
+            if line.highlighted && line.rigid {
+                all_false = false;
+            } else if line.highlighted && !line.rigid {
                 all_true = false;
             }
             if line.highlighted {

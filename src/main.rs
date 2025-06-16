@@ -29,8 +29,8 @@ enum Message {
     Close,
     Back,
     OpenFile(String),
-    Pin(bool),
-    PinState(Quadstate),
+    Pin(bool, bool),
+    PinState(Quadstate, Quadstate),
     Render(f64, u32, f64, f64, f64, f64),
     Link(Option<u32>),
     RenderProgress(f64),
@@ -120,7 +120,7 @@ fn build_ui(app: &Application) {
 
             rl.set_target_fps(30);
 
-            let mut paused = true;
+            let mut paused = false;
 
             while !rl.window_should_close() {
                 let message = receiver_for_raylib.try_recv();
@@ -129,8 +129,9 @@ fn build_ui(app: &Application) {
                         Message::Close => {
                             break;
                         }
-                        Message::Pin(state) => {
-                            draft.pin(state);
+                        Message::Pin(pin_state, rigid_state) => {
+                            draft.pin(pin_state);
+                            draft.rigid(rigid_state);
                         }
 
                         Message::Back => {
@@ -141,7 +142,7 @@ fn build_ui(app: &Application) {
                             draft = Draft::new(file, WIDTH, HEIGHT);
                             state = State::Drafting;
                         }
-                        Message::PinState(_) => {}
+                        Message::PinState(_, _) => {}
                         Message::Render(
                             detail,
                             stiffness,
@@ -171,7 +172,7 @@ fn build_ui(app: &Application) {
                                     cloth = c;
                                 }
                             }
-                            paused = true;
+                            paused = false;
                         }
                         Message::RenderProgress(_) => {}
                         Message::Link(l) => {
@@ -190,23 +191,26 @@ fn build_ui(app: &Application) {
                     State::Drafting => {
                         if d.is_mouse_button_down(raylib::ffi::MouseButton::MOUSE_BUTTON_LEFT) {
                             sender_for_raylib
-                                .send_blocking(Message::PinState(draft.get_pin_status()))
+                                .send_blocking(Message::PinState(
+                                    draft.get_pin_status(),
+                                    draft.get_rigid_status(),
+                                ))
                                 .expect("The channel needs to be open.");
                         }
                         draft.draw(&mut d);
                     }
                     State::Rendering => {
-                        if !paused {
+                        if paused {
                             d.update_camera(&mut cam, CameraMode::CAMERA_FREE);
                         }
 
                         if d.is_mouse_button_pressed(raylib::ffi::MouseButton::MOUSE_BUTTON_LEFT) {
                             d.disable_cursor();
-                            paused = false;
+                            paused = true;
                         }
                         if d.is_mouse_button_released(raylib::ffi::MouseButton::MOUSE_BUTTON_LEFT) {
                             d.enable_cursor();
-                            paused = true;
+                            paused = false;
                         }
 
                         if paused {
@@ -302,20 +306,6 @@ fn build_ui(app: &Application) {
     render_container.append(&back_button);
     render_container.append(&close_button);
 
-    let apply_button = Button::builder().margin_top(6).margin_bottom(6).build();
-    apply_button.set_label("Back");
-
-    apply_button.connect_clicked(clone!(
-        #[strong]
-        sender_for_gtk,
-        move |_| {
-            sender_for_gtk
-                .borrow_mut()
-                .send_blocking(Message::Pin(false))
-                .expect("The channel needs to be open.");
-        }
-    ));
-
     let continue_button = Button::builder().margin_top(6).margin_bottom(6).build();
     continue_button.set_label("Render!");
 
@@ -340,6 +330,12 @@ fn build_ui(app: &Application) {
         .build();
     pin_button.set_label(Some("Pinned"));
 
+    let rigid_button = CheckButton::builder()
+        .margin_top(6)
+        .margin_bottom(6)
+        .build();
+    rigid_button.set_label(Some("Rigid"));
+
     let link_button = Button::builder().margin_top(6).margin_bottom(6).build();
     link_button.set_label("Link");
 
@@ -357,6 +353,20 @@ fn build_ui(app: &Application) {
         }
     ));
 
+    let current_rigid_state = Rc::new(RefCell::new(Quadstate::No));
+    rigid_button.connect_toggled(clone!(
+        #[strong]
+        current_rigid_state,
+        move |rigid| {
+            *current_rigid_state.borrow_mut() = if rigid.is_active() {
+                Quadstate::On
+            } else {
+                Quadstate::Off
+            };
+            rigid.set_inconsistent(false);
+        }
+    ));
+
     let apply_button = Button::builder().margin_top(6).margin_bottom(6).build();
     apply_button.set_label("Apply");
 
@@ -365,15 +375,23 @@ fn build_ui(app: &Application) {
         sender_for_gtk,
         #[strong]
         current_pin_state,
+        #[strong]
+        current_rigid_state,
         move |_| {
-            let state = current_pin_state.borrow_mut();
-            let set_val = match *state {
+            let pin_state = current_pin_state.borrow_mut();
+            let rigid_state = current_rigid_state.borrow_mut();
+            let pin_set_val = match *pin_state {
                 Quadstate::On => true,
                 _ => false,
             };
+            let rigid_set_val = match *rigid_state {
+                Quadstate::On => true,
+                _ => false,
+            };
+
             sender_for_gtk
                 .borrow_mut()
-                .send_blocking(Message::Pin(set_val))
+                .send_blocking(Message::Pin(pin_set_val, rigid_set_val))
                 .expect("The channel needs to be open.");
         }
     ));
@@ -465,6 +483,7 @@ fn build_ui(app: &Application) {
     edit_notebook.append_page(&settings_container, Some(&settings_tab));
 
     edit_edit_container.append(&pin_button);
+    edit_edit_container.append(&rigid_button);
     edit_edit_container.append(&apply_button);
 
     edit_edit_container.append(&link_label);
@@ -587,6 +606,7 @@ fn build_ui(app: &Application) {
         .build();
 
     pin_button.hide();
+    rigid_button.hide();
     link_label.hide();
     spin_button.hide();
     link_button.hide();
@@ -603,18 +623,20 @@ fn build_ui(app: &Application) {
                     Message::OpenFile(file) => {
                         todo!()
                     }
-                    Message::Pin(_) => {
+                    Message::Pin(_, _) => {
                         todo!()
                     }
-                    Message::PinState(state) => {
+                    Message::PinState(pin_state, rigid_state) => {
                         pin_button.show();
+                        rigid_button.show();
                         link_label.show();
                         spin_button.show();
                         link_button.show();
                         apply_button.show();
                         pin_button.set_inconsistent(false);
+                        rigid_button.set_inconsistent(false);
 
-                        match state {
+                        match pin_state {
                             Quadstate::On => {
                                 pin_button.set_active(true);
                             }
@@ -626,6 +648,7 @@ fn build_ui(app: &Application) {
                             }
                             Quadstate::No => {
                                 pin_button.hide();
+                                rigid_button.hide();
                                 link_label.hide();
                                 spin_button.hide();
                                 link_button.hide();
@@ -633,7 +656,21 @@ fn build_ui(app: &Application) {
                             }
                         }
 
-                        *current_pin_state.borrow_mut() = state;
+                        match rigid_state {
+                            Quadstate::On => {
+                                rigid_button.set_active(true);
+                            }
+                            Quadstate::Maybe => {
+                                rigid_button.set_inconsistent(true);
+                            }
+                            Quadstate::Off => {
+                                rigid_button.set_active(false);
+                            }
+                            Quadstate::No => {}
+                        }
+
+                        *current_pin_state.borrow_mut() = pin_state;
+                        *current_rigid_state.borrow_mut() = rigid_state;
                     }
                     Message::RenderProgress(prog) => {
                         print!("prog {}%\n", prog * 100.0);
